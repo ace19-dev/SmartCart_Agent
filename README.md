@@ -213,7 +213,7 @@ sequenceDiagram
     participant Parser as LLM Parser
     participant Search as 상품 검색 Agent
     participant Optimizer as 최적화 엔진
-    participant Mall as 쇼핑몰 API/크롤러
+    participant Mall as 쇼핑몰 MCP Server<br/>(Common Tools)
     participant Router as 결제 라우터
     participant Purchase as 자동구매 Agent (Phase 2)
 
@@ -221,7 +221,7 @@ sequenceDiagram
     UI->>Parser: 자유 텍스트 입력
     Parser->>Parser: JSON 구조화<br/>{items[], ranking_priority: "popularity",<br/>budget: 40000(soft, ±10%), delivery_date: tomorrow, address: home}
     Parser->>Search: 구조화된 요청 전달
-    Search->>Mall: 품목별 상품 검색 (가격/평점/리뷰수·판매량/배송정보)
+    Search->>Mall: [MCP Client] search_products()<br/>품목별 상품 검색 (가격/평점/리뷰수·판매량/배송정보)
     Mall-->>Search: 후보 상품 리스트
 
     alt 요청 상품이 검색 결과에 없음/품절
@@ -237,7 +237,7 @@ sequenceDiagram
         Optimizer->>Optimizer: 예산 허용오차(±10%) 초과 또는<br/>배송 미충족 여부 판단
         alt 미충족
             Optimizer->>Search: 재계획 요청<br/>(용량/수량 조정, 가성비 브랜드 전환,<br/>배송 가능 몰로 재검색 등)
-            Search->>Mall: 조정된 조건으로 재검색
+            Search->>Mall: [MCP Client] search_products()<br/>조정된 조건으로 재검색
             Mall-->>Search: 후보 상품 리스트(갱신)
             Search->>Optimizer: 후보군 재전달
         end
@@ -261,7 +261,7 @@ sequenceDiagram
     opt [Phase 2] "이대로 구매해줘" (자동 구매)
         User->>UI: 자동 구매 승인
         UI->>Purchase: 확정 장바구니 + 승인 신호
-        Purchase->>Mall: 장바구니 담기 → 결제 진행
+        Purchase->>Mall: [MCP Client] add_to_cart() → place_order()<br/>장바구니 담기 → 결제 진행
         Mall-->>Purchase: 주문 완료/실패 결과
         Purchase-->>UI: 주문 내역(영수증/송장) 전달
         UI-->>User: 구매 완료 안내
