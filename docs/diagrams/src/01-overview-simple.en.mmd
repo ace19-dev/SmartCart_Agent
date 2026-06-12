@@ -1,0 +1,14 @@
+flowchart LR
+    User(("🙋 User"))
+    Agent["🤖 SmartCart Agent<br/>(Parse → Search → Optimize → Validate)"]
+    Malls[("🏬 Shopping malls<br/>Coupang · Emart · Kurly · Naver")]
+    Result["🔗 Result<br/>Purchase links per item + price/reason notes"]
+    Checkout(["💳 (Phase 2) Automated checkout<br/>runs after user approval"])
+
+    User -- "Natural-language shopping request" --> Agent
+    Agent -- "Query price/rating/review count/delivery" --> Malls
+    Malls -- "Candidate products" --> Agent
+    Agent -- "Optimal cart + substitution reasons" --> Result
+    Result -- "User confirmation" --> User
+    User -. "Purchase approval (optional)" .-> Checkout
+    Checkout -. "Add to cart + checkout" .-> Malls

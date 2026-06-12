@@ -127,10 +127,10 @@ This input is processed as follows:
 
 #### Overall Structure (Simple)
 
-![Overall Structure (Simple)](./docs/diagrams/01-overview-simple.png)
+![Overall Structure (Simple)](./docs/diagrams/01-overview-simple.en.png)
 
 <details>
-<summary>View Mermaid source (English labels — the rendered PNG uses the Korean source in docs/diagrams/src/01-overview-simple.mmd)</summary>
+<summary>View Mermaid source (when editing, also update docs/diagrams/src/01-overview-simple.en.mmd and regenerate the PNG)</summary>
 
 ```mermaid
 flowchart LR
@@ -153,11 +153,11 @@ flowchart LR
 
 #### Processing Flow (Simple)
 
-<img src="./docs/diagrams/02-pipeline-simple.png" alt="Processing Flow (Simple)" width="420">
+<img src="./docs/diagrams/02-pipeline-simple.en.png" alt="Processing Flow (Simple)" width="420">
 
 
 <details>
-<summary>View Mermaid source (English labels — the rendered PNG uses the Korean source in docs/diagrams/src/02-pipeline-simple.mmd)</summary>
+<summary>View Mermaid source (when editing, also update docs/diagrams/src/02-pipeline-simple.en.mmd and regenerate the PNG)</summary>
 
 ```mermaid
 flowchart TD
@@ -179,10 +179,10 @@ flowchart TD
 
 ### 3.1 Overall Architecture (Detailed)
 
-![Overall Architecture (Detailed)](./docs/diagrams/03-architecture-detail.png)
+![Overall Architecture (Detailed)](./docs/diagrams/03-architecture-detail.en.png)
 
 <details>
-<summary>View Mermaid source (English labels — the rendered PNG uses the Korean source in docs/diagrams/src/03-architecture-detail.mmd)</summary>
+<summary>View Mermaid source (when editing, also update docs/diagrams/src/03-architecture-detail.en.mmd and regenerate the PNG)</summary>
 
 ```mermaid
 flowchart TB
@@ -253,10 +253,10 @@ flowchart TB
 
 ### 3.2 Processing Pipeline (Detailed Sequence)
 
-![Processing Pipeline (Detailed Sequence)](./docs/diagrams/04-sequence-detail.png)
+![Processing Pipeline (Detailed Sequence)](./docs/diagrams/04-sequence-detail.en.png)
 
 <details>
-<summary>View Mermaid source (English labels — the rendered PNG uses the Korean source in docs/diagrams/src/04-sequence-detail.mmd)</summary>
+<summary>View Mermaid source (when editing, also update docs/diagrams/src/04-sequence-detail.en.mmd and regenerate the PNG)</summary>
 
 ```mermaid
 sequenceDiagram

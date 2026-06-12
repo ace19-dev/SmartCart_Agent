@@ -1,0 +1,59 @@
+sequenceDiagram
+    actor User
+    participant UI as Chat UI
+    participant Parser as LLM Parser
+    participant Search as Product Search Agent
+    participant Optimizer as Optimization Engine
+    participant Mall as Shopping Mall MCP Server<br/>(Common Tools)
+    participant Router as Checkout Router
+    participant Purchase as Auto-Checkout Agent (Phase 2)
+
+    User->>UI: "Apples, pears, at least 1 carton of milk (2L+), 2 loaves of bread,<br/>kids' yogurt - prioritize sellers with lots of reviews/sales,<br/>budget around 40,000 won, deliver home tomorrow"
+    UI->>Parser: Free-text input
+    Parser->>Parser: Structure into JSON<br/>{items[], ranking_priority: "popularity",<br/>budget: 40000(soft, ±10%), delivery_date: tomorrow, address: home}
+    Parser->>Search: Pass structured request
+    Search->>Mall: [MCP Client] search_products()<br/>search each item (price/rating/review count·sales/delivery info)
+    Mall-->>Search: Candidate product list
+
+    alt Requested product not found / out of stock
+        Search->>Search: Re-search similar products in same category<br/>(other brand/volume/shopping mall)
+        Search-->>UI: "OOO out of stock - suggesting △△△ instead"
+    end
+
+    Search->>Search: Filter by delivery condition (arrive tomorrow)<br/>→ sort by popularity (review count/sales) primary<br/>→ rating/price secondary
+    Search->>Optimizer: Pass candidate set
+    Optimizer->>Optimizer: Compare combinations including shipping<br/>(single mall vs. split purchase)<br/>+ apply popularity priority
+
+    loop Auto-replan while constraints (approx. budget/delivery date) unmet
+        Optimizer->>Optimizer: Check if budget tolerance (±10%) exceeded<br/>or delivery unsatisfied
+        alt Unsatisfied
+            Optimizer->>Search: Request replan<br/>(adjust volume/quantity, switch to cost-effective brand,<br/>re-search deliverable malls, etc.)
+            Search->>Mall: [MCP Client] search_products()<br/>re-search with adjusted conditions
+            Mall-->>Search: Candidate product list (updated)
+            Search->>Optimizer: Re-pass candidate set
+        end
+    end
+
+    Optimizer-->>UI: Recommended products per item + purchase links + total/budget status<br/>+ reasons for substitutions (over budget/delivery unavailable/out of stock)
+    UI-->>User: Show result cards (link list + substitution reasons)
+
+    opt User requests an alternative
+        User->>UI: "Show me alternatives for the milk"
+        UI->>Search: Re-query alternative candidates
+        Search->>Optimizer: Request recomputation
+        Optimizer-->>UI: Updated cart + links
+    end
+
+    User->>UI: Final confirmation
+    UI->>Router: Pass finalized cart
+    Router-->>UI: Per-mall deep links/cart URLs
+    UI-->>User: [Phase 1] Provide purchase links → user checks out manually
+
+    opt [Phase 2] "Go ahead and buy this" (automated checkout)
+        User->>UI: Approve automated checkout
+        UI->>Purchase: Finalized cart + approval signal
+        Purchase->>Mall: [MCP Client] add_to_cart() → place_order()<br/>add to cart → process payment
+        Mall-->>Purchase: Order completion/failure result
+        Purchase-->>UI: Deliver order details (receipt/invoice)
+        UI-->>User: Notify purchase complete
+    end

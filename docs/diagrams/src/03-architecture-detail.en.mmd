@@ -1,0 +1,62 @@
+flowchart TB
+    subgraph Client["Client (Web / App)"]
+        UI[Chat-style UI<br/>cart result screen]
+    end
+
+    subgraph Gateway["API Gateway"]
+        GW[FastAPI / BFF]
+    end
+
+    subgraph Agent["SmartCart Agent Core"]
+        Parser[1. Requirement analysis<br/>LLM Parser]
+        Orchestrator{{"Orchestrator / Planner<br/>(ReAct Loop)"}}
+        Search[2. Real-time product search/filtering<br/>price·rating·popularity]
+        Optimizer[3. Cart optimization engine<br/>Optimization]
+        Reflect{4. Constraints satisfied?<br/>Reflection}
+        Feedback[5. Feedback & substitution handling]
+        Router[6. Checkout routing<br/>Deep Link Generator]
+        Purchase["7. Automated checkout<br/>Purchase Execution Agent<br/>(Phase 2)"]
+    end
+
+    subgraph Tools["Common Tools<br/>(MCP Servers)"]
+        Coupang[Coupang MCP Server<br/>search/cart/order]
+        Emart[Emart Mall MCP Server<br/>search/cart/order]
+        Kurly[Market Kurly MCP Server<br/>search/cart/order]
+        Naver[Naver Shopping MCP Server<br/>search]
+    end
+
+    subgraph Checkout["Checkout Execution Layer (Phase 2)"]
+        HITL{{"Final user approval<br/>(Human-in-the-loop)"}}
+        Vault[(Credentials/payment methods<br/>Secrets Vault)]
+        AuditLog[(Order/payment audit log)]
+    end
+
+    subgraph Data["Data Layer"]
+        Cache[(Product/price cache<br/>Redis)]
+        DB[(Session/cart DB<br/>PostgreSQL)]
+        Memory[(Long-term preference memory<br/>preferred brands/allergies/purchase history)]
+    end
+
+    UI <--> GW
+    GW <--> Parser
+    Parser --> Orchestrator
+    Orchestrator --> Search
+    Search -- "MCP Client" --> Tools
+    Tools --> Cache
+    Search --> Optimizer
+    Optimizer --> Reflect
+    Reflect -- "Unsatisfied → replan" --> Orchestrator
+    Reflect -- "Satisfied" --> Feedback
+    Feedback <--> GW
+    Feedback --> Router
+    Router --> GW
+    Router -. "Phase 2: automated purchase request" .-> HITL
+    HITL -- "Approve" --> Purchase
+    HITL -- "Reject/modify" --> Feedback
+    Purchase -- "MCP Client" --> Tools
+    Purchase <-.lookup.-> Vault
+    Purchase --> AuditLog
+    Purchase --> GW
+    GW --> DB
+    Optimizer -.read/write.-> DB
+    Orchestrator <-.read/update.-> Memory
