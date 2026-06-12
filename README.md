@@ -101,7 +101,8 @@ flowchart LR
 
 #### 처리 흐름 (Simple)
 
-![처리 흐름 (Simple)](./docs/diagrams/02-pipeline-simple.png)
+<img src="./docs/diagrams/02-pipeline-simple.png" alt="처리 흐름 (Simple)" width="420">
+
 
 <details>
 <summary>Mermaid 소스 보기 (수정 시 docs/diagrams/src/02-pipeline-simple.mmd도 함께 수정 후 이미지 재생성)</summary>
