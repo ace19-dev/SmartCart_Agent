@@ -153,11 +153,11 @@ flowchart TB
         Purchase["7. 자동 구매 실행<br/>Purchase Execution Agent<br/>(Phase 2)"]
     end
 
-    subgraph Tools["External Tools / Connectors"]
-        Coupang[쿠팡 API/크롤러]
-        Emart[이마트몰 API/크롤러]
-        Kurly[마켓컬리 API/크롤러]
-        Naver[네이버쇼핑 API]
+    subgraph Tools["Common Tools<br/>(MCP Servers)"]
+        Coupang[쿠팡 MCP Server<br/>검색/장바구니/주문]
+        Emart[이마트몰 MCP Server<br/>검색/장바구니/주문]
+        Kurly[마켓컬리 MCP Server<br/>검색/장바구니/주문]
+        Naver[네이버쇼핑 MCP Server<br/>검색]
     end
 
     subgraph Checkout["결제 실행 계층 (Phase 2)"]
@@ -176,7 +176,7 @@ flowchart TB
     GW <--> Parser
     Parser --> Orchestrator
     Orchestrator --> Search
-    Search --> Tools
+    Search -- "MCP Client" --> Tools
     Tools --> Cache
     Search --> Optimizer
     Optimizer --> Reflect
@@ -188,7 +188,7 @@ flowchart TB
     Router -. "Phase 2: 자동 구매 요청" .-> HITL
     HITL -- "승인" --> Purchase
     HITL -- "거부/수정" --> Feedback
-    Purchase <--> Tools
+    Purchase -- "MCP Client" --> Tools
     Purchase <-.조회.-> Vault
     Purchase --> AuditLog
     Purchase --> GW
