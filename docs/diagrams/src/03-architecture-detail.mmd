@@ -45,7 +45,7 @@ flowchart TB
     Tools --> Cache
     Search --> Optimizer
     Optimizer --> Reflect
-    Reflect -- "미충족 → 재계획" --> Orchestrator
+    Reflect -- "미충족 → 재계획<br/>(LLM이 조정 조건 판단)" --> Orchestrator
     Reflect -- "충족" --> Feedback
     Feedback <--> GW
     Feedback --> Router

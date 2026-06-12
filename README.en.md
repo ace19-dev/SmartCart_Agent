@@ -163,9 +163,9 @@ flowchart LR
 flowchart TD
     A["1️⃣ Input request<br/>(items, ranking priority, budget, delivery conditions)"] --> B["2️⃣ Normalize items<br/>(infer brand/volume/quantity)"]
     B --> C["3️⃣ Search shopping malls<br/>(price·rating·review count·delivery)"]
-    C --> D["4️⃣ Compute optimal combination<br/>(popularity → rating → price priority)"]
+    C --> D["4️⃣ Compute optimal combination<br/>(initial sort: popularity → rating → price)"]
     D --> E{"5️⃣ Budget/delivery<br/>constraints satisfied?"}
-    E -- "No → Replan" --> C
+    E -- "No → Replan<br/>(LLM judges what to adjust)" --> C
     E -- "Yes" --> F["6️⃣ Present result<br/>purchase links + substitution reasons"]
     F --> G{"7️⃣ User approval<br/>(Phase 2)"}
     G -- "Manual checkout" --> H["✅ Phase 1 complete"]
@@ -232,7 +232,7 @@ flowchart TB
     Tools --> Cache
     Search --> Optimizer
     Optimizer --> Reflect
-    Reflect -- "Unsatisfied → replan" --> Orchestrator
+    Reflect -- "Unsatisfied → replan<br/>(LLM judges what to adjust)" --> Orchestrator
     Reflect -- "Satisfied" --> Feedback
     Feedback <--> GW
     Feedback --> Router

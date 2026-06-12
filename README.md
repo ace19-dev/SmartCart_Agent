@@ -113,9 +113,9 @@ flowchart LR
 flowchart TD
     A["1️⃣ 요청 입력<br/>(품목, 정렬 우선순위, 예산, 배송조건)"] --> B["2️⃣ 항목 정형화<br/>(브랜드/용량/수량 추론)"]
     B --> C["3️⃣ 쇼핑몰 검색<br/>(가격·평점·리뷰수·배송)"]
-    C --> D["4️⃣ 최적 조합 계산<br/>(인기도 → 평점 → 가격 우선)"]
+    C --> D["4️⃣ 최적 조합 계산<br/>(초기 정렬: 인기도 → 평점 → 가격)"]
     D --> E{"5️⃣ 예산/배송<br/>조건 충족?"}
-    E -- "아니오 → 재계획" --> C
+    E -- "아니오 → 재계획<br/>(LLM이 조정 조건 판단)" --> C
     E -- "예" --> F["6️⃣ 결과 제시<br/>구매 링크 + 대체 사유 안내"]
     F --> G{"7️⃣ 사용자 승인<br/>(Phase 2)"}
     G -- "직접 결제" --> H["✅ Phase 1 완료"]
@@ -182,7 +182,7 @@ flowchart TB
     Tools --> Cache
     Search --> Optimizer
     Optimizer --> Reflect
-    Reflect -- "미충족 → 재계획" --> Orchestrator
+    Reflect -- "미충족 → 재계획<br/>(LLM이 조정 조건 판단)" --> Orchestrator
     Reflect -- "충족" --> Feedback
     Feedback <--> GW
     Feedback --> Router
