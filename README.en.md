@@ -16,7 +16,7 @@ a bag of lettuce, arriving before 7am tomorrow, budget under 40,000 won", the ag
 
 1. Normalizes each item (inferring brand/volume/quantity, asking clarifying
    questions when ambiguous)
-2. Queries multiple e-commerce sites (Coupang, Emart Mall, Kurly, Naver Shopping,
+2. Queries multiple e-commerce sites (GS Fresh Mall, Emart Mall, Kurly, Naver Shopping,
    etc.) in real time for price, rating, **review count/sales volume
    (popularity)**, and delivery availability
 3. Computes the **optimal cart combination (Optimization Pack)** including
@@ -101,7 +101,7 @@ This input is processed as follows:
   the popularity/rating priority within **±10% tolerance** of the base
   budget; if it falls outside the tolerance, the overage and reason are
   reported to the user
-- **Delivery timeline matching**: Filters to shopping malls (Rocket Fresh, SSG
+- **Delivery timeline matching**: Filters to shopping malls (GS Fresh, SSG
   Delivery, Kurly, etc.) that satisfy the desired arrival time (e.g. "before
   7am tomorrow") or date-level conditions (e.g. "home by tomorrow")
 
@@ -136,7 +136,7 @@ This input is processed as follows:
 flowchart LR
     User(("🙋 User"))
     Agent["🤖 SmartCart Agent<br/>(Parse → Search → Optimize → Validate)"]
-    Malls[("🏬 Shopping malls<br/>Coupang · Emart · Kurly · Naver")]
+    Malls[("🏬 Shopping malls<br/>GS Fresh Mall · Emart · Kurly · Naver")]
     Result["🔗 Result<br/>Purchase links per item + price/reason notes"]
     Checkout(["💳 (Phase 2) Automated checkout<br/>runs after user approval"])
 
@@ -206,7 +206,7 @@ flowchart TB
     end
 
     subgraph Tools["Common Tools<br/>(MCP Servers)"]
-        Coupang[Coupang MCP Server<br/>search/cart/order]
+        GSFresh[GS Fresh Mall MCP Server<br/>search/cart/order]
         Emart[Emart Mall MCP Server<br/>search/cart/order]
         Kurly[Market Kurly MCP Server<br/>search/cart/order]
         Naver[Naver Shopping MCP Server<br/>search]
@@ -335,7 +335,7 @@ sequenceDiagram
 | **Reflection Module** | Self-validates whether the computed combination satisfies budget (including tolerance)/delivery constraints, and triggers replanning if not. **Records substituted items with a reason code (`budget_exceeded`/`delivery_unavailable`/`out_of_stock`) and explanation**. `ranking_priority` is only the sort criterion for the initial search/optimization — which conditions to adjust during replanning (volume/quantity/brand/shopping mall, etc.) are not fixed rules; **the LLM judges this for itself based on the situation**. **Replanning is attempted at most `max_replan_attempts` times (default 3)**; once the limit is reached, the best combination found so far is presented as a best-effort result along with the unmet reasons | Rule-based validation + LLM evaluation | 🟢 Agent |
 | **Alternative Engine** | Ranks alternative candidates (price/rating/popularity/eco-friendly, etc.) and **automatically finds/suggests similar products in the same category when an item is out of stock or unavailable** | Rule-based + re-invoking search | 🔧 Tool (called by Search/Reflection) |
 | **Deep Link Router** | Generates per-mall product/cart URLs from the final cart (**Phase 1 primary output**) | Per-mall URL scheme mapping | 🔧 Tool (called by Orchestrator) |
-| **Shopping Mall Connector (MCP Server)** | Exposes each mall's product search/detail lookup/cart/order functions as standard MCP Tools (`search_products`, `get_product_detail`, `add_to_cart`, `place_order`, etc.). API-first, with crawlers for unofficial channels | MCP Server (Coupang/Emart/Kurly/Naver, each independently deployed) | 🔧 Tool (called via MCP Client by Search/Purchase Agent) |
+| **Shopping Mall Connector (MCP Server)** | Exposes each mall's product search/detail lookup/cart/order functions as standard MCP Tools (`search_products`, `get_product_detail`, `add_to_cart`, `place_order`, etc.). API-first, with crawlers for unofficial channels | MCP Server (GS Fresh Mall/Emart/Kurly/Naver, each independently deployed) | 🔧 Tool (called via MCP Client by Search/Purchase Agent) |
 | **Purchase Execution Agent (Phase 2)** | After final user approval, adds items to each mall's cart and automatically completes checkout, retrieving order results (receipt/invoice) | LLM Tool-use (MCP Client) → per-mall MCP Server (cart/order tools), Browser Automation (Playwright) | 🟢 Agent |
 | **Session Store** | Manages user sessions, cart state, and feedback history | PostgreSQL / Redis | ⚪ Infra |
 | **Preference Memory** | Stores long-term user preferences across sessions (preferred brands, allergies/excluded foods, ranking priority, frequently purchased items) and applies them to future searches | PostgreSQL (vector/structured) | ⚪ Infra |
@@ -455,34 +455,34 @@ agents call**.
     },
     {
       "item": "pear",
-      "mall": "Coupang (Rocket Fresh)",
+      "mall": "GS Fresh Mall (GS Fresh)",
       "product": "Sinko Pears 3 ct, premium",
       "price": 9900,
       "rating": 4.6,
       "review_count": 25110,
       "delivery_date": "2026-06-13",
-      "url": "https://link.coupang.com/..."
+      "url": "https://www.gsfresh.com/..."
     },
     {
       "item": "milk 2L or more",
-      "mall": "Coupang (Rocket Fresh)",
+      "mall": "GS Fresh Mall (GS Fresh)",
       "product": "Seoul Milk Farm Fresh 2.3L",
       "price": 4980,
       "rating": 4.8,
       "review_count": 41203,
       "delivery_date": "2026-06-13",
-      "url": "https://link.coupang.com/..."
+      "url": "https://www.gsfresh.com/..."
     },
     {
       "item": "bread x2",
-      "mall": "Coupang (Rocket Fresh)",
+      "mall": "GS Fresh Mall (GS Fresh)",
       "product": "Samlip Bread 500g",
       "price": 3290,
       "rating": 4.5,
       "review_count": 9870,
       "qty": 2,
       "delivery_date": "2026-06-13",
-      "url": "https://link.coupang.com/..."
+      "url": "https://www.gsfresh.com/..."
     },
     {
       "item": "kids' yogurt",
@@ -546,7 +546,7 @@ agents call**.
 ## 6. Roadmap
 
 ### Phase 1 — Provide Purchase Links (Current Goal)
-- [ ] Step 1: Natural-language parser + single shopping mall (Coupang) integration PoC
+- [ ] Step 1: Natural-language parser + single shopping mall (GS Fresh Mall) integration PoC
 - [ ] Step 2: Multi-mall comparison and optimization algorithm including shipping cost
 - [ ] Step 3: Popularity-based (review count/sales) ranking priority + alternative recommendation engine
 - [ ] Step 4: Approximate (soft) budget handling + delivery date/time filtering
