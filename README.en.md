@@ -337,8 +337,9 @@ sequenceDiagram
 | **Deep Link Router** | Generates per-mall product/cart URLs from the final cart (**Phase 1 primary output**) | Per-mall URL scheme mapping | 🔧 Tool (called by Orchestrator) |
 | **Shopping Mall Connector (MCP Server)** | Exposes each mall's product search/detail lookup/cart/order functions as standard MCP Tools (`search_products`, `get_product_detail`, `add_to_cart`, `place_order`, etc.). API-first, with crawlers for unofficial channels | MCP Server (GS Fresh Mall/Emart/Kurly/Naver, each independently deployed) | 🔧 Tool (called via MCP Client by Search/Purchase Agent) |
 | **Purchase Execution Agent (Phase 2)** | After final user approval, adds items to each mall's cart and automatically completes checkout, retrieving order results (receipt/invoice) | LLM Tool-use (MCP Client) → per-mall MCP Server (cart/order tools), Browser Automation (Playwright) | 🟢 Agent |
-| **Session Store** | Manages user sessions, cart state, and feedback history | PostgreSQL / Redis | ⚪ Infra |
-| **Preference Memory** | Stores long-term user preferences across sessions (preferred brands, allergies/excluded foods, ranking priority, frequently purchased items) and applies them to future searches | PostgreSQL (vector/structured) | ⚪ Infra |
+| **Session Store (short-term memory)** | Manages in-session state — the current request's parsing results, search candidates, and replanning attempt history. Lets Reflection check prior attempts so it doesn't repeat the same replan | Memory MCP (`agentic-ai-common-tools`, SQLite backend, `namespace="session:{session_id}"`, with TTL) | ⚪ Infra |
+| **Preference Memory (long-term memory)** | Stores long-term user preferences across sessions (preferred brands, allergies/excluded foods, ranking priority, frequently purchased items, past substitution accept/reject history). Looked up and applied by the Parser/Orchestrator on future requests | Memory MCP (`agentic-ai-common-tools`, `namespace="user:{user_id}"`, no TTL; SQLite backend for PoC, extend to Postgres/Redis backend for production) | ⚪ Infra |
+| **Mall Knowledge Base (RAG)** | Indexes unstructured knowledge such as per-mall delivery cutoff times, out-of-stock/substitution patterns, and category-level substitution rules. Reflection/Orchestrator searches this as a supporting knowledge source when deciding replan conditions (core constraints like budget/delivery remain tracked as structured fields) | Retrieval MCP (`agentic-ai-common-tools`, bm25_sqlite/vector backend) | ⚪ Infra |
 | **Secrets Vault (Phase 2)** | Encrypts and stores shopping mall login/payment credentials, retrieved by the Purchase Agent only at execution time | Vault / KMS-based encrypted storage | ⚪ Infra |
 | **Audit Log (Phase 2)** | Records all automated purchase requests, approvals, and order results for tracing/rollback | Append-only log (PostgreSQL/S3) | ⚪ Infra |
 
@@ -378,10 +379,10 @@ agents call**.
     shopping mall only requires adding an MCP Server, with no agent logic
     changes
 
-- ⚪ **Infra (data/security layer, 4 total)** — storage that agents read from
+- ⚪ **Infra (data/security layer, 5 total)** — storage that agents read from
   and write to
-  - Session Store, Preference Memory, Secrets Vault (Phase 2), Audit Log
-    (Phase 2)
+  - Session Store (short-term memory), Preference Memory (long-term memory),
+    Mall Knowledge Base (RAG), Secrets Vault (Phase 2), Audit Log (Phase 2)
 
 > In other words, turning the Optimizer/Alternative Engine/Router into LLM
 > agents would increase cost and latency and make results non-deterministic
@@ -397,7 +398,7 @@ agents call**.
 | **Tool Use** | The Search/Purchase Agent acquires real-time data by calling each shopping mall's **MCP Server (Common Tools)** for search, cart, and order functions as standardized tools |
 | **Reflection / Self-verification** | The Reflection module validates the Optimization results and self-improves through the loop on failure |
 | **Transparency** | Items substituted during replanning have their **substitution reason (over budget/delivery unavailable/out of stock)** clearly stated in the final result alongside the original and replacement products |
-| **Memory** | Uses not only in-session state (Session Store) but also cross-session long-term preferences (Preference Memory) to inform future requests |
+| **Memory** | Short-term: Session Store (Memory MCP) keeps the current request's search/replan attempt history so Reflection avoids repeating the same replan. Long-term: Preference Memory (Memory MCP) carries cross-session user preferences into future requests. Additionally, Mall Knowledge Base (Retrieval MCP, RAG) is searched for per-mall heuristics to support replan decisions |
 | **Ambiguity Resolution / Human-in-the-loop** | Items with low parser confidence trigger a clarifying question or a best-guess suggestion with reasoning. A user confirmation step is retained before final checkout |
 | **Goal/Constraint Tracking** | Budget (hard/soft, tolerance), delivery deadline/date, and ranking priority (popularity/rating/price) are consistently tracked across the entire pipeline, with satisfaction status shown in the final result |
 | **Safe Autonomous Execution (Phase 2 Safety)** | Automated checkout always requires **user approval (HITL)** immediately before payment; credentials are retrieved from the Secrets Vault only at execution time; all order actions are recorded in the Audit Log for traceability/refund handling |
