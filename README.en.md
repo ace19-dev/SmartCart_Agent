@@ -297,7 +297,7 @@ sequenceDiagram
         end
     end
 
-    Optimizer-->>UI: Recommended products per item + purchase links + total/budget status<br/>(best-effort if limit reached)<br/>+ reasons for substitutions/unmet items (over budget/delivery unavailable/out of stock)
+    Optimizer-->>UI: Recommended products per item + purchase links (e.g., GS Fresh Mall, Market Kurly, etc.) + total/budget status<br/>(best-effort if limit reached)<br/>+ reasons for substitutions/unmet items (over budget/delivery unavailable/out of stock)
     UI-->>User: Show result cards (link list + substitution reasons)
 
     opt User requests an alternative
