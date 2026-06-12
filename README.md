@@ -272,20 +272,43 @@ sequenceDiagram
 
 ### 3.3 모듈 구성
 
-| 모듈 | 책임 | 주요 기술 |
-|---|---|---|
-| **Request Parser** | 자유 형식 입력 → 구조화 JSON 변환 (품목, 수량/스펙, 정렬 우선순위, 예산(hard/soft), 배송 기한·주소). 신뢰도가 낮으면 명확화 질문 생성 | LLM (Function Calling / Structured Output) |
-| **Orchestrator (Planner)** | 전체 작업을 하위 단계로 분해하고, Search→Optimize→Reflect 루프를 제어. Reflection 결과에 따라 재계획(Replan) 지시 | LLM Agent Loop (ReAct / Plan-Execute) |
-| **Product Search Agent** | 쇼핑몰별 검색 도구 호출, 배송조건/가격/평점/**리뷰 수·판매량(인기도)** 1차 필터링·정렬 | LLM Tool-use, API Connector, Crawler |
-| **Optimization Engine** | 배송비 포함 총액이 (근사) 예산 내에서 정렬 우선순위(인기도/평점/가격)를 만족하는 조합 계산 (단일몰 vs 분할구매) | 조합 최적화 알고리즘 (Knapsack/Greedy + 제약조건) |
-| **Reflection Module** | 산출된 조합이 예산(허용 오차 포함)/배송 제약을 만족하는지 자체 검증, 미충족 시 재계획 트리거. **대체된 항목은 사유 코드(`budget_exceeded`/`delivery_unavailable`/`out_of_stock`)와 설명을 함께 기록** | 규칙 기반 검증 + LLM 평가 |
-| **Alternative Engine** | 대체품 후보 정렬(가격/평점/인기도/친환경 등) 및 **품절/미존재 상품 발생 시 동일 카테고리 유사 상품 자동 탐색·제안** | 규칙 기반 + 검색 재호출 |
-| **Deep Link Router** | 최종 장바구니 → 쇼핑몰별 상품/장바구니 URL 생성 (**Phase 1 기본 출력**) | 쇼핑몰별 URL 스킴 매핑 |
-| **Purchase Execution Agent (Phase 2)** | 사용자 최종 승인 후 쇼핑몰별 장바구니 담기 → 결제 자동 수행, 주문 결과(영수증/송장) 회수 | Browser Automation (Playwright), 쇼핑몰 결제 API |
-| **Session Store** | 사용자 세션, 장바구니 상태, 피드백 이력 관리 | PostgreSQL / Redis |
-| **Preference Memory** | 세션을 넘어선 장기 사용자 선호도(선호 브랜드, 알러지/제외 식품, 정렬 우선순위, 자주 구매하는 품목) 저장 및 검색 시 반영 | PostgreSQL (vector/structured) |
-| **Secrets Vault (Phase 2)** | 쇼핑몰 로그인/결제수단 자격증명을 암호화 보관, Purchase Agent가 실행 시점에만 조회 | Vault / KMS 기반 암호화 저장소 |
-| **Audit Log (Phase 2)** | 자동 구매 요청·승인·주문 결과를 모두 기록하여 추적/롤백 근거 확보 | append-only 로그 (PostgreSQL/S3) |
+| 모듈 | 책임 | 주요 기술 | 구분 |
+|---|---|---|---|
+| **Request Parser** | 자유 형식 입력 → 구조화 JSON 변환 (품목, 수량/스펙, 정렬 우선순위, 예산(hard/soft), 배송 기한·주소). 신뢰도가 낮으면 명확화 질문 생성 | LLM (Function Calling / Structured Output) | 🟢 Agent |
+| **Orchestrator (Planner)** | 전체 작업을 하위 단계로 분해하고, Search→Optimize→Reflect 루프를 제어. Reflection 결과에 따라 재계획(Replan) 지시 | LLM Agent Loop (ReAct / Plan-Execute) | 🟢 Agent |
+| **Product Search Agent** | 쇼핑몰별 검색 도구 호출, 배송조건/가격/평점/**리뷰 수·판매량(인기도)** 1차 필터링·정렬 | LLM Tool-use (MCP Client) → 쇼핑몰별 MCP Server | 🟢 Agent |
+| **Optimization Engine** | 배송비 포함 총액이 (근사) 예산 내에서 정렬 우선순위(인기도/평점/가격)를 만족하는 조합 계산 (단일몰 vs 분할구매) | 조합 최적화 알고리즘 (Knapsack/Greedy + 제약조건) | 🔧 Tool (Orchestrator/Reflection이 호출) |
+| **Reflection Module** | 산출된 조합이 예산(허용 오차 포함)/배송 제약을 만족하는지 자체 검증, 미충족 시 재계획 트리거. **대체된 항목은 사유 코드(`budget_exceeded`/`delivery_unavailable`/`out_of_stock`)와 설명을 함께 기록** | 규칙 기반 검증 + LLM 평가 | 🟢 Agent |
+| **Alternative Engine** | 대체품 후보 정렬(가격/평점/인기도/친환경 등) 및 **품절/미존재 상품 발생 시 동일 카테고리 유사 상품 자동 탐색·제안** | 규칙 기반 + 검색 재호출 | 🔧 Tool (Search/Reflection이 호출) |
+| **Deep Link Router** | 최종 장바구니 → 쇼핑몰별 상품/장바구니 URL 생성 (**Phase 1 기본 출력**) | 쇼핑몰별 URL 스킴 매핑 | 🔧 Tool (Orchestrator가 호출) |
+| **쇼핑몰 커넥터 (MCP Server)** | 쇼핑몰별 상품 검색/상세조회/장바구니/주문 기능을 표준 MCP Tool(`search_products`, `get_product_detail`, `add_to_cart`, `place_order` 등)로 노출. API 우선, 비공식 채널은 크롤러로 구현 | MCP Server (쿠팡/이마트/컬리/네이버, 각각 독립 배포) | 🔧 Tool (Search/Purchase Agent가 MCP Client로 호출) |
+| **Purchase Execution Agent (Phase 2)** | 사용자 최종 승인 후 쇼핑몰별 장바구니 담기 → 결제 자동 수행, 주문 결과(영수증/송장) 회수 | LLM Tool-use (MCP Client) → 쇼핑몰별 MCP Server (장바구니/주문 Tool), Browser Automation (Playwright) | 🟢 Agent |
+| **Session Store** | 사용자 세션, 장바구니 상태, 피드백 이력 관리 | PostgreSQL / Redis | ⚪ Infra |
+| **Preference Memory** | 세션을 넘어선 장기 사용자 선호도(선호 브랜드, 알러지/제외 식품, 정렬 우선순위, 자주 구매하는 품목) 저장 및 검색 시 반영 | PostgreSQL (vector/structured) | ⚪ Infra |
+| **Secrets Vault (Phase 2)** | 쇼핑몰 로그인/결제수단 자격증명을 암호화 보관, Purchase Agent가 실행 시점에만 조회 | Vault / KMS 기반 암호화 저장소 | ⚪ Infra |
+| **Audit Log (Phase 2)** | 자동 구매 요청·승인·주문 결과를 모두 기록하여 추적/롤백 근거 확보 | append-only 로그 (PostgreSQL/S3) | ⚪ Infra |
+
+### 3.3.1 에이전트(Agent) vs 도구(Tool) vs 인프라(Infra) 구분
+
+SmartCart Agent Core의 모든 모듈을 LLM 에이전트로 만들 필요는 없습니다. **판단/계획이 필요한 곳만 에이전트**로 두고, **입출력이 정해진 계산/매핑은 에이전트가 호출하는 도구(Tool)**로 구현합니다.
+
+- 🟢 **Agent (LLM 기반, 5개)** — 스스로 상황을 판단하고 다음 행동을 계획함
+  - **Orchestrator**: 메인 에이전트. Search→Optimize→Reflect 루프를 제어하고 재계획 여부를 결정
+  - **Request Parser**: 자연어 요청을 구조화하고, 모호한 항목은 확인 질문 생성
+  - **Product Search Agent**: 검색 도구를 호출하며 결과를 보고 다음 검색 전략을 조정
+  - **Reflection Module**: Optimizer 결과를 평가하고, 대체 사유를 사용자에게 설명할 문구를 생성
+  - **Purchase Execution Agent (Phase 2)**: 자동 구매 실행 및 예외 상황(품절/결제 실패 등) 대응
+
+- 🔧 **Tool (결정론적 함수/외부 연동, 4개)** — 입력이 같으면 항상 같은 결과를 내는 계산/매핑이거나, 표준 인터페이스로 노출된 외부 연동. 빠르고 저렴하며 테스트하기 쉬움
+  - **Optimization Engine**: `optimize_cart()` — 조합 최적화 계산
+  - **Alternative Engine**: `get_alternatives()` — 대체품 후보 정렬/필터링
+  - **Deep Link Router**: `build_deep_link()` — 쇼핑몰별 URL 생성
+  - **쇼핑몰 커넥터 (MCP Server)**: 쇼핑몰별 API/크롤러를 `search_products`, `get_product_detail`, `add_to_cart`, `place_order` 같은 **MCP Tool**로 표준화. Search/Purchase Agent는 MCP Client로 동일한 방식 호출 → 쇼핑몰 추가/교체 시 에이전트 로직 변경 없이 MCP Server만 추가
+
+- ⚪ **Infra (데이터/보안 계층, 4개)** — 에이전트가 읽고 쓰는 저장소
+  - Session Store, Preference Memory, Secrets Vault (Phase 2), Audit Log (Phase 2)
+
+> 즉 Optimizer/Alternative Engine/Router를 LLM 에이전트로 만들면 비용·지연시간이 늘고 결과가 비결정적이 되어 디버깅이 어려워지므로, 도구로 유지하고 Orchestrator/Reflection 에이전트가 Tool-use로 호출하는 구조를 권장합니다.
 
 ### 3.4 Agentic AI 요건 체크리스트
 
@@ -293,7 +316,7 @@ sequenceDiagram
 |---|---|
 | **자율성 (Autonomy)** | 사용자가 결과를 거부하지 않는 한, 검색 → 최적화 → 제약조건 검증 → 재계획까지 사람 개입 없이 자동 수행 |
 | **계획 & 재계획 (Plan & Replan)** | Orchestrator가 목표(예산/배송시간/평점)를 하위 작업으로 분해하고, Reflection에서 제약 미충족 시 용량 조절·브랜드 전환·재검색 등으로 자동 재계획 |
-| **도구 사용 (Tool Use)** | Search Agent가 쇼핑몰 API/크롤러를 도구로 호출하여 실시간 데이터를 획득 |
+| **도구 사용 (Tool Use)** | Search/Purchase Agent가 쇼핑몰별 **MCP Server(Common Tools)**를 통해 검색·장바구니·주문 기능을 표준화된 Tool로 호출하여 실시간 데이터를 획득 |
 | **반성/자기검증 (Reflection)** | Optimization 결과를 Reflection 모듈이 검증하고, 실패 시 루프를 통해 스스로 개선 |
 | **투명성 (Transparency)** | 재계획으로 대체된 항목은 원래 상품/대체 상품과 함께 **대체 사유(예산 초과/배송 불가/품절)를 최종 결과에 명시**하여 사용자가 이유를 알 수 있게 함 |
 | **메모리 (Memory)** | 세션 내 상태(Session Store)뿐 아니라 세션 간 장기 선호도(Preference Memory)를 활용해 다음 요청에 반영 |
@@ -428,6 +451,7 @@ sequenceDiagram
 | LLM / 에이전트 프레임워크 | Claude (Function Calling / Tool Use), LangGraph or custom orchestration |
 | 백엔드 API | Python (FastAPI) |
 | 상품 데이터 수집 | 공식 Open API 우선, 비공식 채널은 크롤러 (Playwright/requests) |
+| 도구 통합 (Common Tools) | 쇼핑몰별 커넥터(API/크롤러)를 **MCP Server**로 구현 (`search_products`/`get_product_detail`/`add_to_cart`/`place_order`), Search·Purchase Agent는 MCP Client로 호출 |
 | 캐시 | Redis (가격/상품/인기도(리뷰수·판매량) 캐시 TTL 관리) |
 | DB | PostgreSQL (세션, 장바구니, 사용자 선호도) |
 | 프론트엔드 | React / Next.js (채팅형 UI + 카드형 결과/링크 뷰) |
