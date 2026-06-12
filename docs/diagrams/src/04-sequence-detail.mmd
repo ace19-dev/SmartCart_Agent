@@ -1,0 +1,59 @@
+sequenceDiagram
+    actor User
+    participant UI as 채팅 UI
+    participant Parser as LLM Parser
+    participant Search as 상품 검색 Agent
+    participant Optimizer as 최적화 엔진
+    participant Mall as 쇼핑몰 API/크롤러
+    participant Router as 결제 라우터
+    participant Purchase as 자동구매 Agent (Phase 2)
+
+    User->>UI: "사과, 배, 우유 2L 이상 1개, 식빵 2개, 어린이 요구르트<br/>구매평/판매량 많은 곳 우선, 예산 4만원 정도,<br/>내일 집으로 도착"
+    UI->>Parser: 자유 텍스트 입력
+    Parser->>Parser: JSON 구조화<br/>{items[], ranking_priority: "popularity",<br/>budget: 40000(soft, ±10%), delivery_date: tomorrow, address: home}
+    Parser->>Search: 구조화된 요청 전달
+    Search->>Mall: 품목별 상품 검색 (가격/평점/리뷰수·판매량/배송정보)
+    Mall-->>Search: 후보 상품 리스트
+
+    alt 요청 상품이 검색 결과에 없음/품절
+        Search->>Search: 동일 카테고리 유사 상품 재검색<br/>(타 브랜드/용량/타 쇼핑몰)
+        Search-->>UI: "OOO 품절 - 대체품 △△△ 제안"
+    end
+
+    Search->>Search: 배송조건(내일 도착) 1차 필터<br/>→ 인기도(리뷰수/판매량) 우선 정렬<br/>→ 평점/가격 보조 정렬
+    Search->>Optimizer: 후보군 전달
+    Optimizer->>Optimizer: 배송비 포함 조합 비교<br/>(단일몰 vs 분할구매)<br/>+ 인기도 우선순위 반영
+
+    loop 제약조건(근사예산/배송일) 미충족 시 자동 재계획
+        Optimizer->>Optimizer: 예산 허용오차(±10%) 초과 또는<br/>배송 미충족 여부 판단
+        alt 미충족
+            Optimizer->>Search: 재계획 요청<br/>(용량/수량 조정, 가성비 브랜드 전환,<br/>배송 가능 몰로 재검색 등)
+            Search->>Mall: 조정된 조건으로 재검색
+            Mall-->>Search: 후보 상품 리스트(갱신)
+            Search->>Optimizer: 후보군 재전달
+        end
+    end
+
+    Optimizer-->>UI: 품목별 추천 상품 + 구매 링크 + 총액/예산 충족 여부<br/>+ 대체된 항목의 사유(예산 초과/배송 불가/품절)
+    UI-->>User: 결과 카드(링크 리스트 + 대체 사유 안내) 표시
+
+    opt 사용자 대체품 요청
+        User->>UI: "우유 대체품 보여줘"
+        UI->>Search: 대체품 후보 재조회
+        Search->>Optimizer: 재계산 요청
+        Optimizer-->>UI: 갱신된 장바구니 + 링크
+    end
+
+    User->>UI: 최종 확인
+    UI->>Router: 확정된 장바구니 전달
+    Router-->>UI: 쇼핑몰별 딥링크/장바구니 URL
+    UI-->>User: [Phase 1] 구매 링크 제공 → 사용자가 직접 결제
+
+    opt [Phase 2] "이대로 구매해줘" (자동 구매)
+        User->>UI: 자동 구매 승인
+        UI->>Purchase: 확정 장바구니 + 승인 신호
+        Purchase->>Mall: 장바구니 담기 → 결제 진행
+        Mall-->>Purchase: 주문 완료/실패 결과
+        Purchase-->>UI: 주문 내역(영수증/송장) 전달
+        UI-->>User: 구매 완료 안내
+    end

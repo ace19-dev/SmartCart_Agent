@@ -1,0 +1,14 @@
+flowchart LR
+    User(("🙋 사용자"))
+    Agent["🤖 SmartCart Agent<br/>(분석 → 검색 → 최적화 → 검증)"]
+    Malls[("🏬 쇼핑몰들<br/>쿠팡 · 이마트 · 컬리 · 네이버")]
+    Result["🔗 결과<br/>품목별 구매 링크 + 가격/사유 안내"]
+    Checkout(["💳 (Phase 2) 자동 구매<br/>사용자 승인 후 실행"])
+
+    User -- "자연어 장보기 요청" --> Agent
+    Agent -- "가격/평점/리뷰수/배송 조회" --> Malls
+    Malls -- "후보 상품" --> Agent
+    Agent -- "최적 장바구니 + 대체 사유" --> Result
+    Result -- "사용자 확인" --> User
+    User -. "구매 승인 (선택)" .-> Checkout
+    Checkout -. "장바구니 담기 + 결제" .-> Malls

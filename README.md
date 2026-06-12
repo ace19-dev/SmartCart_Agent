@@ -12,10 +12,29 @@
 구어체로 입력한 장보기 리스트를 분석하여,
 
 1. 항목을 정형화하고 (브랜드/용량/수량 추론, 모호하면 확인 질문)
-2. 여러 이커머스(쿠팡, 이마트몰, 컬리, 네이버 쇼핑 등)에서 실시간 가격·평점·배송 가능 시간을 조회하고
-3. 배송비를 포함한 **최적 장바구니 조합(Optimization Pack)**을 계산하고, **예산/배송 제약을 스스로 검증**하여 미충족 시 자동으로 재계획하며
+2. 여러 이커머스(쿠팡, 이마트몰, 컬리, 네이버 쇼핑 등)에서 실시간 가격·평점·**리뷰 수/판매량(인기도)**·배송 가능 시간을 조회하고
+3. 배송비를 포함한 **최적 장바구니 조합(Optimization Pack)**을 계산하고, **예산(근사치 포함)/배송 제약을 스스로 검증**하여 미충족 시 자동으로 재계획하며
 4. 사용자에게 제안 + 대체품 옵션을 제공하고
-5. 각 쇼핑몰의 **딥링크/장바구니 링크**로 결제를 라우팅합니다.
+5. **[Phase 1]** 각 쇼핑몰의 **딥링크/장바구니 링크**를 제공하여 사용자가 직접 결제하거나,
+   **[Phase 2]** 사용자 승인을 거쳐 **자동으로 결제까지 수행**합니다.
+
+### 1.1 예시 시나리오
+
+> **사용자 입력**
+> "사과, 배 과일, 우유 2L 이상 1개, 식빵 2개, 어린이 요구르트 찾아줘.
+> 구매평이나 구매가 많은 곳으로 우선적으로 찾고, 예산은 4만원 정도 사용하고,
+> 집으로 내일 받아봤으면 좋겠어."
+
+이 입력은 다음과 같이 처리됩니다.
+
+1. **Parser** — 5개 품목(사과, 배, 우유≥2L×1, 식빵×2, 어린이 요구르트)을 정형화하고,
+   정렬 우선순위를 `popularity`(리뷰 수/판매량)로, 예산을 **근사치(soft budget, ≈40,000원)**로,
+   배송 조건을 **"내일 집 주소로 도착"**(시간 미지정)으로 추출
+2. **Search Agent** — 각 품목별로 후보 상품을 조회하고 리뷰 수·판매량(베스트 순위) 기준으로 1차 정렬
+3. **Optimizer** — 배송비 포함 총액이 예산 근사치(±허용오차) 내에서, 인기도 우선 + 평점/가격을 보조 기준으로 최적 조합 산출
+4. **Reflection** — 예산 초과/배송 불가 항목이 있으면 동일 카테고리 내 더 저렴하거나 배송 가능한 대체 상품으로 재계획하고, **어떤 항목이 왜 대체되었는지(예산 초과/배송 불가/품절) 사유를 함께 기록**
+5. **출력 (Phase 1)** — 품목별 추천 상품 + **구매 링크(딥링크)** 리스트, 총액/예산 충족 여부, 그리고 **재계획으로 대체된 항목의 사유(원래 상품, 대체 이유, 대체 상품)**를 사용자에게 제시
+6. **출력 (Phase 2, 향후)** — 사용자가 "이대로 구매해줘"라고 확인하면, Purchase Execution Agent가 각 쇼핑몰 장바구니에 담고 결제를 대행 수행
 
 ---
 
@@ -24,8 +43,9 @@
 ### 🔹 1단계 — 지능형 아이템 매칭 및 최적화
 - **자연어 파싱**: "대패삼겹살 대용량, 퐁퐁" → 브랜드/용량/수량을 추론해 정형 데이터로 변환
 - **모호성 해소**: 파싱 신뢰도가 낮은 항목(예: "퐁퐁" → 세제 브랜드/용량 다수 존재)은 사용자에게 짧은 확인 질문을 던지거나, 가장 가능성 높은 후보 + 근거를 함께 제시
-- **다중 조건 검색**: 가격 + 평점(예: 4.5/5.0 이상) 기준으로 여러 쇼핑몰 비교
-- **최적 조합 생성**: 배송비를 포함한 총액이 최소가 되는 쇼핑몰 조합 + 직접 구매 링크 제공
+- **다중 조건 검색**: 가격 + 평점(예: 4.5/5.0 이상) + **리뷰 수/판매량(인기도)** 기준으로 여러 쇼핑몰 비교
+- **정렬 우선순위 커스터마이즈**: "구매평이나 구매가 많은 곳" 같은 요청은 `popularity`(리뷰 수·판매량·베스트 순위)를 1순위 정렬 기준으로 사용하고, 동일 인기도일 경우 평점·가격을 보조 기준으로 사용
+- **최적 조합 생성**: 배송비를 포함한 총액이 (근사) 예산 내에서 정렬 우선순위(인기도/평점/가격)를 만족하는 쇼핑몰 조합 + **직접 구매 링크** 제공
 
 ### 🔹 2단계 — 유연한 대체품 추천 (Alternative Engine)
 - **원클릭 교체**: 추천 상품이 마음에 들지 않으면 차순위 최저가/타 브랜드 동일 카테고리 상품 즉시 추천
@@ -37,13 +57,79 @@
 
 ### 🔹 3단계 — 예산 및 배송 시간 동시 만족 (Budget & Delivery Routing)
 - **예산 가드레일**: 설정된 예산을 초과하지 않도록 용량 조절 또는 가성비 브랜드로 자동 전환 제안
-- **배송 타임라인 매칭**: 희망 도착 시간(예: "내일 아침 7시 전")을 만족하는 쇼핑몰(로켓프레시, 쓱배송, 컬리 등)만 필터링
+- **근사 예산(Soft Budget) 처리**: "4만원 정도"처럼 명확한 상한이 아닌 경우, 기준 예산의 **±10% 허용 오차** 내에서 인기도/평점 우선순위를 우선 만족하는 조합을 탐색하고, 허용 오차를 벗어나면 사용자에게 초과분과 사유를 함께 안내
+- **배송 타임라인 매칭**: 희망 도착 시간(예: "내일 아침 7시 전") 또는 "내일까지 집으로"처럼 날짜 단위 조건을 만족하는 쇼핑몰(로켓프레시, 쓱배송, 컬리 등)만 필터링
+
+### 🔹 4단계 — 구매 링크 제공 및 자동 구매 (Output & Checkout)
+- **[Phase 1] 구매 링크 제공**: 최적 조합이 확정되면 품목별 쇼핑몰 딥링크/장바구니 URL을 정리해 사용자에게 전달. 사용자가 직접 클릭하여 결제
+- **[Phase 2] 자동 구매 실행**: 사용자가 최종 승인하면 Purchase Execution Agent가 각 쇼핑몰에 로그인된 세션으로 장바구니에 담고 결제까지 대행. 결제 직전 단계는 항상 **Human-in-the-loop 승인**을 거치며, 전체 과정은 감사 로그(Audit Log)로 기록
 
 ---
 
 ## 3. 시스템 아키텍처
 
-### 3.1 전체 구조도
+### 3.0 한눈에 보는 아키텍처 (Simple View)
+
+> 아래는 비개발자도 쉽게 이해할 수 있도록 핵심 흐름만 단순화한 그림입니다.
+> 상세한 모듈/연결 구조는 3.1~3.2의 다이어그램을 참고하세요.
+
+#### 전체 구조 (Simple)
+
+![전체 구조 (Simple)](./docs/diagrams/01-overview-simple.png)
+
+<details>
+<summary>Mermaid 소스 보기 (수정 시 docs/diagrams/src/01-overview-simple.mmd도 함께 수정 후 이미지 재생성)</summary>
+
+```mermaid
+flowchart LR
+    User(("🙋 사용자"))
+    Agent["🤖 SmartCart Agent<br/>(분석 → 검색 → 최적화 → 검증)"]
+    Malls[("🏬 쇼핑몰들<br/>쿠팡 · 이마트 · 컬리 · 네이버")]
+    Result["🔗 결과<br/>품목별 구매 링크 + 가격/사유 안내"]
+    Checkout(["💳 (Phase 2) 자동 구매<br/>사용자 승인 후 실행"])
+
+    User -- "자연어 장보기 요청" --> Agent
+    Agent -- "가격/평점/리뷰수/배송 조회" --> Malls
+    Malls -- "후보 상품" --> Agent
+    Agent -- "최적 장바구니 + 대체 사유" --> Result
+    Result -- "사용자 확인" --> User
+    User -. "구매 승인 (선택)" .-> Checkout
+    Checkout -. "장바구니 담기 + 결제" .-> Malls
+```
+
+</details>
+
+#### 처리 흐름 (Simple)
+
+![처리 흐름 (Simple)](./docs/diagrams/02-pipeline-simple.png)
+
+<details>
+<summary>Mermaid 소스 보기 (수정 시 docs/diagrams/src/02-pipeline-simple.mmd도 함께 수정 후 이미지 재생성)</summary>
+
+```mermaid
+flowchart TD
+    A["1️⃣ 요청 입력<br/>(품목, 정렬 우선순위, 예산, 배송조건)"] --> B["2️⃣ 항목 정형화<br/>(브랜드/용량/수량 추론)"]
+    B --> C["3️⃣ 쇼핑몰 검색<br/>(가격·평점·리뷰수·배송)"]
+    C --> D["4️⃣ 최적 조합 계산<br/>(인기도 → 평점 → 가격 우선)"]
+    D --> E{"5️⃣ 예산/배송<br/>조건 충족?"}
+    E -- "아니오 → 재계획" --> C
+    E -- "예" --> F["6️⃣ 결과 제시<br/>구매 링크 + 대체 사유 안내"]
+    F --> G{"7️⃣ 사용자 승인<br/>(Phase 2)"}
+    G -- "직접 결제" --> H["✅ Phase 1 완료"]
+    G -- "자동 구매 요청" --> I["🤖 자동 구매 실행<br/>(장바구니 담기 → 결제)"]
+    I --> J["✅ 구매 완료 + 영수증 안내"]
+```
+
+</details>
+
+---
+
+### 3.1 전체 구조도 (상세)
+
+![전체 구조도 (상세)](./docs/diagrams/03-architecture-detail.png)
+
+<details>
+<summary>Mermaid 소스 보기 (수정 시 docs/diagrams/src/03-architecture-detail.mmd도 함께 수정 후 이미지 재생성)</summary>
 
 ```mermaid
 flowchart TB
@@ -58,11 +144,12 @@ flowchart TB
     subgraph Agent["SmartCart Agent Core"]
         Parser[1. 요구사항 분석<br/>LLM Parser]
         Orchestrator{{"Orchestrator / Planner<br/>(ReAct Loop)"}}
-        Search[2. 실시간 상품 검색/필터링<br/>Tool-using Agent]
+        Search[2. 실시간 상품 검색/필터링<br/>가격·평점·인기도]
         Optimizer[3. 장바구니 최적화 엔진<br/>Optimization]
         Reflect{4. 제약조건 충족?<br/>Reflection}
         Feedback[5. 피드백 & 대체품 처리]
         Router[6. 결제 라우팅<br/>Deep Link Generator]
+        Purchase["7. 자동 구매 실행<br/>Purchase Execution Agent<br/>(Phase 2)"]
     end
 
     subgraph Tools["External Tools / Connectors"]
@@ -70,6 +157,12 @@ flowchart TB
         Emart[이마트몰 API/크롤러]
         Kurly[마켓컬리 API/크롤러]
         Naver[네이버쇼핑 API]
+    end
+
+    subgraph Checkout["결제 실행 계층 (Phase 2)"]
+        HITL{{"사용자 최종 승인<br/>(Human-in-the-loop)"}}
+        Vault[(자격증명/결제수단<br/>Secrets Vault)]
+        AuditLog[(주문/결제 감사 로그)]
     end
 
     subgraph Data["데이터 계층"]
@@ -91,12 +184,26 @@ flowchart TB
     Feedback <--> GW
     Feedback --> Router
     Router --> GW
+    Router -. "Phase 2: 자동 구매 요청" .-> HITL
+    HITL -- "승인" --> Purchase
+    HITL -- "거부/수정" --> Feedback
+    Purchase <--> Tools
+    Purchase <-.조회.-> Vault
+    Purchase --> AuditLog
+    Purchase --> GW
     GW --> DB
     Optimizer -.read/write.-> DB
     Orchestrator <-.조회/갱신.-> Memory
 ```
 
-### 3.2 처리 파이프라인 (Sequence)
+</details>
+
+### 3.2 처리 파이프라인 (상세 Sequence)
+
+![처리 파이프라인 (상세 Sequence)](./docs/diagrams/04-sequence-detail.png)
+
+<details>
+<summary>Mermaid 소스 보기 (수정 시 docs/diagrams/src/04-sequence-detail.mmd도 함께 수정 후 이미지 재생성)</summary>
 
 ```mermaid
 sequenceDiagram
@@ -104,15 +211,16 @@ sequenceDiagram
     participant UI as 채팅 UI
     participant Parser as LLM Parser
     participant Search as 상품 검색 Agent
-    participant Opt as 최적화 엔진
+    participant Optimizer as 최적화 엔진
     participant Mall as 쇼핑몰 API/크롤러
     participant Router as 결제 라우터
+    participant Purchase as 자동구매 Agent (Phase 2)
 
-    User->>UI: "내일 아침 7시 전, 삼겹살 1kg+쌈장+상추, 예산 4만원"
+    User->>UI: "사과, 배, 우유 2L 이상 1개, 식빵 2개, 어린이 요구르트<br/>구매평/판매량 많은 곳 우선, 예산 4만원 정도,<br/>내일 집으로 도착"
     UI->>Parser: 자유 텍스트 입력
-    Parser->>Parser: JSON 구조화<br/>{item, qty, delivery_before, budget}
+    Parser->>Parser: JSON 구조화<br/>{items[], ranking_priority: "popularity",<br/>budget: 40000(soft, ±10%), delivery_date: tomorrow, address: home}
     Parser->>Search: 구조화된 요청 전달
-    Search->>Mall: 상품 검색 (가격/평점/배송정보)
+    Search->>Mall: 품목별 상품 검색 (가격/평점/리뷰수·판매량/배송정보)
     Mall-->>Search: 후보 상품 리스트
 
     alt 요청 상품이 검색 결과에 없음/품절
@@ -120,49 +228,63 @@ sequenceDiagram
         Search-->>UI: "OOO 품절 - 대체품 △△△ 제안"
     end
 
-    Search->>Search: 배송시간 1차 필터 → 가격/평점 정렬
-    Search->>Opt: 후보군 전달
-    Opt->>Opt: 배송비 포함 조합 비교<br/>(단일몰 vs 분할구매)
+    Search->>Search: 배송조건(내일 도착) 1차 필터<br/>→ 인기도(리뷰수/판매량) 우선 정렬<br/>→ 평점/가격 보조 정렬
+    Search->>Optimizer: 후보군 전달
+    Optimizer->>Optimizer: 배송비 포함 조합 비교<br/>(단일몰 vs 분할구매)<br/>+ 인기도 우선순위 반영
 
-    loop 제약조건(예산/배송시간) 미충족 시 자동 재계획
-        Opt->>Opt: 예산 초과 또는 배송 미충족 여부 판단
+    loop 제약조건(근사예산/배송일) 미충족 시 자동 재계획
+        Optimizer->>Optimizer: 예산 허용오차(±10%) 초과 또는<br/>배송 미충족 여부 판단
         alt 미충족
-            Opt->>Search: 재계획 요청<br/>(용량↓, 가성비 브랜드 전환,<br/>배송 빠른 몰로 재검색 등)
+            Optimizer->>Search: 재계획 요청<br/>(용량/수량 조정, 가성비 브랜드 전환,<br/>배송 가능 몰로 재검색 등)
             Search->>Mall: 조정된 조건으로 재검색
             Mall-->>Search: 후보 상품 리스트(갱신)
-            Search->>Opt: 후보군 재전달
+            Search->>Optimizer: 후보군 재전달
         end
     end
 
-    Opt-->>UI: 최적 장바구니 제안 + 대체품 가이드
-    UI-->>User: 결과 카드 표시
+    Optimizer-->>UI: 품목별 추천 상품 + 구매 링크 + 총액/예산 충족 여부<br/>+ 대체된 항목의 사유(예산 초과/배송 불가/품절)
+    UI-->>User: 결과 카드(링크 리스트 + 대체 사유 안내) 표시
 
     opt 사용자 대체품 요청
-        User->>UI: "상추 대체품 보여줘"
+        User->>UI: "우유 대체품 보여줘"
         UI->>Search: 대체품 후보 재조회
-        Search->>Opt: 재계산 요청
-        Opt-->>UI: 갱신된 장바구니
+        Search->>Optimizer: 재계산 요청
+        Optimizer-->>UI: 갱신된 장바구니 + 링크
     end
 
     User->>UI: 최종 확인
     UI->>Router: 확정된 장바구니 전달
     Router-->>UI: 쇼핑몰별 딥링크/장바구니 URL
-    UI-->>User: 결제 페이지로 이동
+    UI-->>User: [Phase 1] 구매 링크 제공 → 사용자가 직접 결제
+
+    opt [Phase 2] "이대로 구매해줘" (자동 구매)
+        User->>UI: 자동 구매 승인
+        UI->>Purchase: 확정 장바구니 + 승인 신호
+        Purchase->>Mall: 장바구니 담기 → 결제 진행
+        Mall-->>Purchase: 주문 완료/실패 결과
+        Purchase-->>UI: 주문 내역(영수증/송장) 전달
+        UI-->>User: 구매 완료 안내
+    end
 ```
+
+</details>
 
 ### 3.3 모듈 구성
 
 | 모듈 | 책임 | 주요 기술 |
 |---|---|---|
-| **Request Parser** | 자유 형식 입력 → 구조화 JSON 변환 (품목, 수량, 예산, 배송 기한). 신뢰도가 낮으면 명확화 질문 생성 | LLM (Function Calling / Structured Output) |
+| **Request Parser** | 자유 형식 입력 → 구조화 JSON 변환 (품목, 수량/스펙, 정렬 우선순위, 예산(hard/soft), 배송 기한·주소). 신뢰도가 낮으면 명확화 질문 생성 | LLM (Function Calling / Structured Output) |
 | **Orchestrator (Planner)** | 전체 작업을 하위 단계로 분해하고, Search→Optimize→Reflect 루프를 제어. Reflection 결과에 따라 재계획(Replan) 지시 | LLM Agent Loop (ReAct / Plan-Execute) |
-| **Product Search Agent** | 쇼핑몰별 검색 도구 호출, 배송시간/가격/평점 1차 필터링 | LLM Tool-use, API Connector, Crawler |
-| **Optimization Engine** | 배송비 포함 총액 최소화 조합 계산 (단일몰 vs 분할구매) | 조합 최적화 알고리즘 (Knapsack/Greedy + 제약조건) |
-| **Reflection Module** | 산출된 조합이 예산/배송 제약을 만족하는지 자체 검증, 미충족 시 재계획 트리거 | 규칙 기반 검증 + LLM 평가 |
-| **Alternative Engine** | 대체품 후보 정렬(가격/평점/친환경 등) 및 **품절/미존재 상품 발생 시 동일 카테고리 유사 상품 자동 탐색·제안** | 규칙 기반 + 검색 재호출 |
-| **Deep Link Router** | 최종 장바구니 → 쇼핑몰별 상품/장바구니 URL 생성 | 쇼핑몰별 URL 스킴 매핑 |
+| **Product Search Agent** | 쇼핑몰별 검색 도구 호출, 배송조건/가격/평점/**리뷰 수·판매량(인기도)** 1차 필터링·정렬 | LLM Tool-use, API Connector, Crawler |
+| **Optimization Engine** | 배송비 포함 총액이 (근사) 예산 내에서 정렬 우선순위(인기도/평점/가격)를 만족하는 조합 계산 (단일몰 vs 분할구매) | 조합 최적화 알고리즘 (Knapsack/Greedy + 제약조건) |
+| **Reflection Module** | 산출된 조합이 예산(허용 오차 포함)/배송 제약을 만족하는지 자체 검증, 미충족 시 재계획 트리거. **대체된 항목은 사유 코드(`budget_exceeded`/`delivery_unavailable`/`out_of_stock`)와 설명을 함께 기록** | 규칙 기반 검증 + LLM 평가 |
+| **Alternative Engine** | 대체품 후보 정렬(가격/평점/인기도/친환경 등) 및 **품절/미존재 상품 발생 시 동일 카테고리 유사 상품 자동 탐색·제안** | 규칙 기반 + 검색 재호출 |
+| **Deep Link Router** | 최종 장바구니 → 쇼핑몰별 상품/장바구니 URL 생성 (**Phase 1 기본 출력**) | 쇼핑몰별 URL 스킴 매핑 |
+| **Purchase Execution Agent (Phase 2)** | 사용자 최종 승인 후 쇼핑몰별 장바구니 담기 → 결제 자동 수행, 주문 결과(영수증/송장) 회수 | Browser Automation (Playwright), 쇼핑몰 결제 API |
 | **Session Store** | 사용자 세션, 장바구니 상태, 피드백 이력 관리 | PostgreSQL / Redis |
-| **Preference Memory** | 세션을 넘어선 장기 사용자 선호도(선호 브랜드, 알러지/제외 식품, 자주 구매하는 품목) 저장 및 검색 시 반영 | PostgreSQL (vector/structured) |
+| **Preference Memory** | 세션을 넘어선 장기 사용자 선호도(선호 브랜드, 알러지/제외 식품, 정렬 우선순위, 자주 구매하는 품목) 저장 및 검색 시 반영 | PostgreSQL (vector/structured) |
+| **Secrets Vault (Phase 2)** | 쇼핑몰 로그인/결제수단 자격증명을 암호화 보관, Purchase Agent가 실행 시점에만 조회 | Vault / KMS 기반 암호화 저장소 |
+| **Audit Log (Phase 2)** | 자동 구매 요청·승인·주문 결과를 모두 기록하여 추적/롤백 근거 확보 | append-only 로그 (PostgreSQL/S3) |
 
 ### 3.4 Agentic AI 요건 체크리스트
 
@@ -172,9 +294,11 @@ sequenceDiagram
 | **계획 & 재계획 (Plan & Replan)** | Orchestrator가 목표(예산/배송시간/평점)를 하위 작업으로 분해하고, Reflection에서 제약 미충족 시 용량 조절·브랜드 전환·재검색 등으로 자동 재계획 |
 | **도구 사용 (Tool Use)** | Search Agent가 쇼핑몰 API/크롤러를 도구로 호출하여 실시간 데이터를 획득 |
 | **반성/자기검증 (Reflection)** | Optimization 결과를 Reflection 모듈이 검증하고, 실패 시 루프를 통해 스스로 개선 |
+| **투명성 (Transparency)** | 재계획으로 대체된 항목은 원래 상품/대체 상품과 함께 **대체 사유(예산 초과/배송 불가/품절)를 최종 결과에 명시**하여 사용자가 이유를 알 수 있게 함 |
 | **메모리 (Memory)** | 세션 내 상태(Session Store)뿐 아니라 세션 간 장기 선호도(Preference Memory)를 활용해 다음 요청에 반영 |
 | **모호성 해소 / Human-in-the-loop** | Parser 신뢰도가 낮은 항목은 사용자에게 확인 질문을 던지거나, 최선 추정 + 근거를 함께 제시. 최종 결제 전 사용자 확인 단계 유지 |
-| **목표/제약 추적 (Goal Tracking)** | 예산·배송 기한·평점 기준이 파이프라인 전 단계에서 일관되게 추적되며, 최종 결과에 충족 여부를 명시 |
+| **목표/제약 추적 (Goal Tracking)** | 예산(hard/soft, 허용오차)·배송 기한/날짜·정렬 우선순위(인기도/평점/가격) 기준이 파이프라인 전 단계에서 일관되게 추적되며, 최종 결과에 충족 여부를 명시 |
+| **안전한 자율 실행 (Phase 2 Safety)** | 자동 구매는 결제 직전 **반드시 사용자 승인(HITL)**을 요구하며, 자격증명은 Secrets Vault에서 실행 시점에만 조회, 모든 주문 행위는 Audit Log에 기록되어 추적·환불 대응 가능 |
 
 ---
 
@@ -185,64 +309,114 @@ sequenceDiagram
 ```json
 {
   "items": [
-    { "name": "삼겹살", "qty": "1kg", "category": "정육" },
-    { "name": "쌈장", "qty": "1개", "category": "장류" },
-    { "name": "상추", "qty": "1봉지", "category": "채소" }
+    { "name": "사과", "qty": 1, "unit": "봉지", "category": "과일" },
+    { "name": "배", "qty": 1, "unit": "봉지", "category": "과일" },
+    { "name": "우유", "qty": 1, "unit": "개", "min_volume": "2L", "category": "유제품" },
+    { "name": "식빵", "qty": 2, "unit": "개", "category": "베이커리" },
+    { "name": "어린이 요구르트", "qty": 1, "unit": "묶음", "category": "유제품" }
   ],
-  "budget": 40000,
-  "delivery_before": "2026-06-12T07:00:00+09:00",
+  "ranking_priority": ["popularity", "rating", "price"],
+  "budget": { "amount": 40000, "type": "soft", "tolerance_pct": 10 },
+  "delivery": { "date": "2026-06-13", "time": null, "address": "home" },
   "preferences": {
-    "min_rating": 4.5,
+    "min_rating": null,
     "organic_preferred": false
   }
 }
 ```
 
+> `ranking_priority`: "구매평이나 구매가 많은 곳"처럼 인기도 기준 요청 시 `popularity`(리뷰 수/판매량/베스트 순위)를 1순위로 설정
+> `budget.type`: "정도/약" 같은 표현은 `soft`로 분류, "이하/이내"는 `hard`로 분류
+
 ### 4.2 최적화 결과 (Optimization Pack)
 
 ```json
 {
-  "total_price": 32500,
-  "budget": 40000,
-  "estimated_delivery": "2026-06-12T06:30:00+09:00",
-  "delivery_satisfied": true,
+  "total_price": 38700,
+  "budget": { "amount": 40000, "type": "soft", "tolerance_pct": 10 },
+  "budget_satisfied": true,
+  "delivery": { "date": "2026-06-13", "satisfied": true },
+  "ranking_priority": ["popularity", "rating", "price"],
   "cart": [
     {
-      "mall": "쿠팡 (로켓프레시)",
-      "product": "한돈 삼겹살 구이용 (냉장) 1kg",
-      "price": 24900,
-      "rating": 4.6,
-      "delivery_window": "내일 새벽 7시 전 도착",
-      "url": "https://link.coupang.com/..."
-    },
-    {
-      "mall": "쿠팡 (로켓프레시)",
-      "product": "해찬들 사계절 쌈장 500g",
-      "price": 2800,
+      "item": "사과",
+      "mall": "마켓컬리",
+      "product": "사과 1.5kg (5~6입)",
+      "price": 12900,
       "rating": 4.7,
-      "delivery_window": "내일 새벽 7시 전 도착",
+      "review_count": 18342,
+      "delivery_date": "2026-06-13",
+      "url": "https://www.kurly.com/goods/..."
+    },
+    {
+      "item": "배",
+      "mall": "쿠팡 (로켓프레시)",
+      "product": "신고배 3입 특상",
+      "price": 9900,
+      "rating": 4.6,
+      "review_count": 25110,
+      "delivery_date": "2026-06-13",
       "url": "https://link.coupang.com/..."
     },
     {
+      "item": "우유 2L 이상",
+      "mall": "쿠팡 (로켓프레시)",
+      "product": "서울우유 목장의 신선함 2.3L",
+      "price": 4980,
+      "rating": 4.8,
+      "review_count": 41203,
+      "delivery_date": "2026-06-13",
+      "url": "https://link.coupang.com/..."
+    },
+    {
+      "item": "식빵 x2",
+      "mall": "쿠팡 (로켓프레시)",
+      "product": "삼립 식빵 500g",
+      "price": 3290,
+      "rating": 4.5,
+      "review_count": 9870,
+      "qty": 2,
+      "delivery_date": "2026-06-13",
+      "url": "https://link.coupang.com/..."
+    },
+    {
+      "item": "어린이 요구르트",
       "mall": "이마트 (쓱배송)",
-      "product": "무농약 청상추 150g",
-      "price": 4800,
-      "rating": 4.4,
-      "delivery_window": "내일 오전 06:00~09:00",
+      "product": "푸르밀 children's 요구르트 100ml x 15입",
+      "price": 7600,
+      "rating": 4.6,
+      "review_count": 6520,
+      "delivery_date": "2026-06-13",
       "url": "https://emart.ssg.com/..."
+    }
+  ],
+  "substitutions": [
+    {
+      "original_item": "우유 2L 이상",
+      "original_product": "매일우유 그릭요거트 2.3L (프리미엄)",
+      "original_price": 8900,
+      "reason": "budget_exceeded",
+      "reason_detail": "예산 허용오차(±10%, 최대 44,000원) 초과로 더 저렴한 동일 카테고리 상품으로 대체",
+      "replacement_product": "서울우유 목장의 신선함 2.3L",
+      "replacement_price": 4980
     }
   ],
   "alternatives": [
     {
-      "for_item": "무농약 청상추 150g",
-      "suggestion": "쿠팡 로켓프레시 상추",
-      "price": 6000,
-      "price_diff": 1200,
-      "reason": "새벽 배송 확실"
+      "for_item": "어린이 요구르트",
+      "suggestion": "남양 아이꼬야 요구르트 80ml x 12입",
+      "price": 6900,
+      "review_count": 15230,
+      "reason": "리뷰 수/판매량 더 높음"
     }
   ]
 }
 ```
+
+> `substitutions`: Reflection 단계에서 예산/배송 제약 미충족으로 **실제로 대체된 항목**을 기록.
+> `reason`은 `budget_exceeded` | `delivery_unavailable` | `out_of_stock` 중 하나의 코드로 표준화하고,
+> `reason_detail`은 사용자에게 그대로 노출할 한국어 설명. (`alternatives`는 사용자가 선택적으로
+> 바꿔볼 수 있는 추천 후보로, `substitutions`와는 별개)
 
 ---
 
@@ -253,20 +427,28 @@ sequenceDiagram
 | LLM / 에이전트 프레임워크 | Claude (Function Calling / Tool Use), LangGraph or custom orchestration |
 | 백엔드 API | Python (FastAPI) |
 | 상품 데이터 수집 | 공식 Open API 우선, 비공식 채널은 크롤러 (Playwright/requests) |
-| 캐시 | Redis (가격/상품 캐시 TTL 관리) |
+| 캐시 | Redis (가격/상품/인기도(리뷰수·판매량) 캐시 TTL 관리) |
 | DB | PostgreSQL (세션, 장바구니, 사용자 선호도) |
-| 프론트엔드 | React / Next.js (채팅형 UI + 카드형 결과 뷰) |
+| 프론트엔드 | React / Next.js (채팅형 UI + 카드형 결과/링크 뷰) |
+| 자동 구매 (Phase 2) | Playwright 기반 브라우저 자동화, 쇼핑몰별 결제 연동, Secrets Vault (자격증명/결제수단) |
 | 배포 | Docker, CI/CD (GitHub Actions) |
 
 ---
 
 ## 6. 향후 로드맵
 
+### Phase 1 — 구매 링크 제공 (현재 목표)
 - [ ] 1단계: 자연어 파서 + 단일 쇼핑몰(쿠팡) 연동 PoC
 - [ ] 2단계: 다중 쇼핑몰 비교 및 배송비 포함 최적화 알고리즘
-- [ ] 3단계: 대체품 추천 엔진 + UI 인터랙션
-- [ ] 4단계: 예산 가드레일 + 배송 타임라인 필터
-- [ ] 5단계: 딥링크 결제 라우팅 및 사용자 피드백 루프
+- [ ] 3단계: 인기도(리뷰 수/판매량) 기반 정렬 우선순위 + 대체품 추천 엔진
+- [ ] 4단계: 근사 예산(Soft Budget) 처리 + 배송 날짜/시간 필터
+- [ ] 5단계: 품목별 딥링크 제공 및 사용자 피드백 루프
+
+### Phase 2 — 자동 구매 실행 (향후)
+- [ ] 6단계: Secrets Vault 연동 (쇼핑몰 로그인/결제수단 보관)
+- [ ] 7단계: Purchase Execution Agent (장바구니 담기 → 결제 자동화, Playwright 기반)
+- [ ] 8단계: 결제 직전 Human-in-the-loop 승인 플로우
+- [ ] 9단계: 주문/결제 Audit Log + 주문 결과(영수증/송장) 회수 및 사용자 통지
 
 ---
 

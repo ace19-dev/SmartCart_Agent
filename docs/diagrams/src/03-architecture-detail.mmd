@@ -1,0 +1,62 @@
+flowchart TB
+    subgraph Client["클라이언트 (Web / App)"]
+        UI[채팅형 UI<br/>장바구니 결과 화면]
+    end
+
+    subgraph Gateway["API Gateway"]
+        GW[FastAPI / BFF]
+    end
+
+    subgraph Agent["SmartCart Agent Core"]
+        Parser[1. 요구사항 분석<br/>LLM Parser]
+        Orchestrator{{"Orchestrator / Planner<br/>(ReAct Loop)"}}
+        Search[2. 실시간 상품 검색/필터링<br/>가격·평점·인기도]
+        Optimizer[3. 장바구니 최적화 엔진<br/>Optimization]
+        Reflect{4. 제약조건 충족?<br/>Reflection}
+        Feedback[5. 피드백 & 대체품 처리]
+        Router[6. 결제 라우팅<br/>Deep Link Generator]
+        Purchase["7. 자동 구매 실행<br/>Purchase Execution Agent<br/>(Phase 2)"]
+    end
+
+    subgraph Tools["External Tools / Connectors"]
+        Coupang[쿠팡 API/크롤러]
+        Emart[이마트몰 API/크롤러]
+        Kurly[마켓컬리 API/크롤러]
+        Naver[네이버쇼핑 API]
+    end
+
+    subgraph Checkout["결제 실행 계층 (Phase 2)"]
+        HITL{{"사용자 최종 승인<br/>(Human-in-the-loop)"}}
+        Vault[(자격증명/결제수단<br/>Secrets Vault)]
+        AuditLog[(주문/결제 감사 로그)]
+    end
+
+    subgraph Data["데이터 계층"]
+        Cache[(상품/가격 캐시<br/>Redis)]
+        DB[(세션/장바구니 DB<br/>PostgreSQL)]
+        Memory[(장기 선호도 메모리<br/>선호 브랜드/알러지/구매이력)]
+    end
+
+    UI <--> GW
+    GW <--> Parser
+    Parser --> Orchestrator
+    Orchestrator --> Search
+    Search --> Tools
+    Tools --> Cache
+    Search --> Optimizer
+    Optimizer --> Reflect
+    Reflect -- "미충족 → 재계획" --> Orchestrator
+    Reflect -- "충족" --> Feedback
+    Feedback <--> GW
+    Feedback --> Router
+    Router --> GW
+    Router -. "Phase 2: 자동 구매 요청" .-> HITL
+    HITL -- "승인" --> Purchase
+    HITL -- "거부/수정" --> Feedback
+    Purchase <--> Tools
+    Purchase <-.조회.-> Vault
+    Purchase --> AuditLog
+    Purchase --> GW
+    GW --> DB
+    Optimizer -.read/write.-> DB
+    Orchestrator <-.조회/갱신.-> Memory

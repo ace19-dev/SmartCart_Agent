@@ -1,0 +1,35 @@
+# Claude Code가 컨텍스트로 읽지 않아야 할 파일/디렉터리
+
+# 의존성 / 가상환경
+.venv/
+venv/
+env/
+node_modules/
+
+# 빌드/캐시
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+
+# 자격증명 / 비밀정보 (Phase 2 결제·로그인 연동 시 절대 노출 금지)
+.env
+.env.*
+*.pem
+*.key
+secrets/
+credentials/
+vault/
+
+# 로그 / 감사 로그 / 임시 데이터
+*.log
+logs/
+data/cache/
+*.sqlite3
+
+# IDE
+.idea/
+.vscode/
