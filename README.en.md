@@ -203,13 +203,11 @@ flowchart TB
         Feedback[5. Feedback & substitution handling]
         Router[6. Checkout routing<br/>Deep Link Generator]
         Purchase["7. Automated checkout<br/>Purchase Execution Agent<br/>(Phase 2)"]
+        Onboarding["8. Mall Onboarding Agent<br/>(semi-automated adapter generation, HITL review)"]
     end
 
-    subgraph Tools["Common Tools<br/>(MCP Servers)"]
-        GSFresh[GS Fresh Mall MCP Server<br/>search/cart/order]
-        Emart[Emart Mall MCP Server<br/>search/cart/order]
-        Kurly[Market Kurly MCP Server<br/>search/cart/order]
-        Naver[Naver Shopping MCP Server<br/>search]
+    subgraph Tools["Common Tools<br/>(MCP Server)"]
+        MallConnector["Shopping Mall Connector MCP Server<br/>(single server + per-mall adapters)<br/>GS Fresh Mall · Emart · Kurly · Naver"]
     end
 
     subgraph Checkout["Checkout Execution Layer (Phase 2)"]
@@ -247,6 +245,7 @@ flowchart TB
     GW --> DB
     Optimizer -.read/write.-> DB
     Orchestrator <-.read/update.-> Memory
+    Onboarding -. "Adapter draft<br/>(merged after HITL review)" .-> Tools
 ```
 
 </details>
@@ -335,7 +334,8 @@ sequenceDiagram
 | **Reflection Module** | Self-validates whether the computed combination satisfies budget (including tolerance)/delivery constraints, and triggers replanning if not. **Records substituted items with a reason code (`budget_exceeded`/`delivery_unavailable`/`out_of_stock`) and explanation**. `ranking_priority` is only the sort criterion for the initial search/optimization — which conditions to adjust during replanning (volume/quantity/brand/shopping mall, etc.) are not fixed rules; **the LLM judges this for itself based on the situation**. **Replanning is attempted at most `max_replan_attempts` times (default 3)**; once the limit is reached, the best combination found so far is presented as a best-effort result along with the unmet reasons | Rule-based validation + LLM evaluation | 🟢 Agent |
 | **Alternative Engine** | Ranks alternative candidates (price/rating/popularity/eco-friendly, etc.) and **automatically finds/suggests similar products in the same category when an item is out of stock or unavailable** | Rule-based + re-invoking search | 🔧 Tool (called by Search/Reflection) |
 | **Deep Link Router** | Generates per-mall product/cart URLs from the final cart (**Phase 1 primary output**) | Per-mall URL scheme mapping | 🔧 Tool (called by Orchestrator) |
-| **Shopping Mall Connector (MCP Server)** | Exposes each mall's product search/detail lookup/cart/order functions as standard MCP Tools (`search_products`, `get_product_detail`, `add_to_cart`, `place_order`, etc.). API-first, with crawlers for unofficial channels | MCP Server (GS Fresh Mall/Emart/Kurly/Naver, each independently deployed) | 🔧 Tool (called via MCP Client by Search/Purchase Agent) |
+| **Shopping Mall Connector (MCP Server)** | Exposes each mall's product search/detail lookup/cart/order functions as standard MCP Tools (`search_products`, `get_product_detail`, `add_to_cart`, `place_order`, etc.). **A single MCP server registers per-mall adapters as plugins** to route calls (e.g., `malls/gsfresh.py`, `malls/emart.py`) — adding a new mall requires only a new adapter, not a new server. API-first, with crawlers for unofficial channels | MCP Server (single server + per-mall adapters: GS Fresh Mall/Emart/Kurly/Naver, etc.) | 🔧 Tool (called via MCP Client by Search/Purchase Agent) |
+| **Mall Onboarding Agent (semi-automated)** | Analyzes a new mall's API docs/sample pages to generate an adapter code skeleton (`search_products`/`add_to_cart`/`place_order` mappings, selectors/URL scheme) and validation test cases. **Requires human review/testing before merge (HITL)** — generated adapters are never applied automatically without validation | LLM code generation + sample-data-driven tests | 🟢 Agent (HITL required) |
 | **Purchase Execution Agent (Phase 2)** | After final user approval, adds items to each mall's cart and automatically completes checkout, retrieving order results (receipt/invoice) | LLM Tool-use (MCP Client) → per-mall MCP Server (cart/order tools), Browser Automation (Playwright) | 🟢 Agent |
 | **Session Store (short-term memory)** | Manages in-session state — the current request's parsing results, search candidates, and replanning attempt history. Lets Reflection check prior attempts so it doesn't repeat the same replan | Memory MCP (`agentic-ai-common-tools`, SQLite backend, `namespace="session:{session_id}"`, with TTL) | ⚪ Infra |
 | **Preference Memory (long-term memory)** | Stores long-term user preferences across sessions (preferred brands, allergies/excluded foods, ranking priority, frequently purchased items, past substitution accept/reject history). Looked up and applied by the Parser/Orchestrator on future requests | Memory MCP (`agentic-ai-common-tools`, `namespace="user:{user_id}"`, no TTL; SQLite backend for PoC, extend to Postgres/Redis backend for production) | ⚪ Infra |
@@ -350,7 +350,7 @@ modules that require **judgment/planning** are agents; **deterministic
 computation/mapping with fixed inputs/outputs** is implemented as a **tool that
 agents call**.
 
-- 🟢 **Agent (LLM-based, 5 total)** — assesses the situation and plans the next
+- 🟢 **Agent (LLM-based, 6 total)** — assesses the situation and plans the next
   action on its own
   - **Orchestrator**: The main agent. Controls the Search→Optimize→Reflect
     loop and decides whether to replan
@@ -362,6 +362,9 @@ agents call**.
     explanation shown to the user for substitutions
   - **Purchase Execution Agent (Phase 2)**: Executes automated checkout and
     handles exceptions (out of stock, payment failure, etc.)
+  - **Mall Onboarding Agent (semi-automated)**: Generates an adapter code/test
+    skeleton for a new mall, added to the Shopping Mall Connector MCP Server
+    after human review (HITL)
 
 - 🔧 **Tool (deterministic functions/external integrations, 4 total)** —
   computation/mapping that always produces the same result for the same input,
@@ -372,12 +375,12 @@ agents call**.
   - **Alternative Engine**: `get_alternatives()` — ranks/filters alternative
     candidates
   - **Deep Link Router**: `build_deep_link()` — generates per-mall URLs
-  - **Shopping Mall Connector (MCP Server)**: Standardizes each mall's
-    API/crawler as **MCP Tools** such as `search_products`,
-    `get_product_detail`, `add_to_cart`, and `place_order`. Search/Purchase
-    Agents call them the same way via MCP Client → adding/replacing a
-    shopping mall only requires adding an MCP Server, with no agent logic
-    changes
+  - **Shopping Mall Connector (MCP Server)**: A single MCP server registers
+    per-mall adapters (plugins) that standardize `search_products`,
+    `get_product_detail`, `add_to_cart`, and `place_order` as **MCP Tools**.
+    Search/Purchase Agents call them the same way via MCP Client → adding a
+    new mall only requires a new adapter, not a new server (drafted by the
+    Mall Onboarding Agent)
 
 - ⚪ **Infra (data/security layer, 5 total)** — storage that agents read from
   and write to

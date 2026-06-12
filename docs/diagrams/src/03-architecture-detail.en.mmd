@@ -16,13 +16,11 @@ flowchart TB
         Feedback[5. Feedback & substitution handling]
         Router[6. Checkout routing<br/>Deep Link Generator]
         Purchase["7. Automated checkout<br/>Purchase Execution Agent<br/>(Phase 2)"]
+        Onboarding["8. Mall Onboarding Agent<br/>(semi-automated adapter generation, HITL review)"]
     end
 
-    subgraph Tools["Common Tools<br/>(MCP Servers)"]
-        GSFresh[GS Fresh Mall MCP Server<br/>search/cart/order]
-        Emart[Emart Mall MCP Server<br/>search/cart/order]
-        Kurly[Market Kurly MCP Server<br/>search/cart/order]
-        Naver[Naver Shopping MCP Server<br/>search]
+    subgraph Tools["Common Tools<br/>(MCP Server)"]
+        MallConnector["Shopping Mall Connector MCP Server<br/>(single server + per-mall adapters)<br/>GS Fresh Mall · Emart · Kurly · Naver"]
     end
 
     subgraph Checkout["Checkout Execution Layer (Phase 2)"]
@@ -60,3 +58,4 @@ flowchart TB
     GW --> DB
     Optimizer -.read/write.-> DB
     Orchestrator <-.read/update.-> Memory
+    Onboarding -. "Adapter draft<br/>(merged after HITL review)" .-> Tools

@@ -16,13 +16,11 @@ flowchart TB
         Feedback[5. 피드백 & 대체품 처리]
         Router[6. 결제 라우팅<br/>Deep Link Generator]
         Purchase["7. 자동 구매 실행<br/>Purchase Execution Agent<br/>(Phase 2)"]
+        Onboarding["8. Mall Onboarding Agent<br/>(반자동 어댑터 생성, HITL 리뷰)"]
     end
 
-    subgraph Tools["Common Tools<br/>(MCP Servers)"]
-        GSFresh[GS프레시몰 MCP Server<br/>검색/장바구니/주문]
-        Emart[이마트몰 MCP Server<br/>검색/장바구니/주문]
-        Kurly[마켓컬리 MCP Server<br/>검색/장바구니/주문]
-        Naver[네이버쇼핑 MCP Server<br/>검색]
+    subgraph Tools["Common Tools<br/>(MCP Server)"]
+        MallConnector["쇼핑몰 커넥터 MCP Server<br/>(단일 서버 + 몰별 어댑터)<br/>GS프레시몰 · 이마트 · 컬리 · 네이버"]
     end
 
     subgraph Checkout["결제 실행 계층 (Phase 2)"]
@@ -60,3 +58,4 @@ flowchart TB
     GW --> DB
     Optimizer -.read/write.-> DB
     Orchestrator <-.조회/갱신.-> Memory
+    Onboarding -. "어댑터 초안<br/>(HITL 리뷰 후 머지)" .-> Tools

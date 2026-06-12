@@ -153,13 +153,11 @@ flowchart TB
         Feedback[5. 피드백 & 대체품 처리]
         Router[6. 결제 라우팅<br/>Deep Link Generator]
         Purchase["7. 자동 구매 실행<br/>Purchase Execution Agent<br/>(Phase 2)"]
+        Onboarding["8. Mall Onboarding Agent<br/>(반자동 어댑터 생성, HITL 리뷰)"]
     end
 
-    subgraph Tools["Common Tools<br/>(MCP Servers)"]
-        GSFresh[GS프레시몰 MCP Server<br/>검색/장바구니/주문]
-        Emart[이마트몰 MCP Server<br/>검색/장바구니/주문]
-        Kurly[마켓컬리 MCP Server<br/>검색/장바구니/주문]
-        Naver[네이버쇼핑 MCP Server<br/>검색]
+    subgraph Tools["Common Tools<br/>(MCP Server)"]
+        MallConnector["쇼핑몰 커넥터 MCP Server<br/>(단일 서버 + 몰별 어댑터)<br/>GS프레시몰 · 이마트 · 컬리 · 네이버"]
     end
 
     subgraph Checkout["결제 실행 계층 (Phase 2)"]
@@ -197,6 +195,7 @@ flowchart TB
     GW --> DB
     Optimizer -.read/write.-> DB
     Orchestrator <-.조회/갱신.-> Memory
+    Onboarding -. "어댑터 초안<br/>(HITL 리뷰 후 머지)" .-> Tools
 ```
 
 </details>
@@ -285,7 +284,8 @@ sequenceDiagram
 | **Reflection Module** | 산출된 조합이 예산(허용 오차 포함)/배송 제약을 만족하는지 자체 검증, 미충족 시 재계획 트리거. **대체된 항목은 사유 코드(`budget_exceeded`/`delivery_unavailable`/`out_of_stock`)와 설명을 함께 기록**. `ranking_priority`는 초기 검색/최적화의 정렬 기준일 뿐, 재계획 시 어떤 조건(용량/수량/브랜드/쇼핑몰 등)을 조정할지는 고정 규칙이 아니라 **LLM이 상황에 맞게 스스로 판단**. **재계획은 최대 `max_replan_attempts`(기본 3회)까지만 시도**하고, 한도 도달 시 최선의 조합(best-effort)과 미충족 사유를 함께 제시 | 규칙 기반 검증 + LLM 평가 | 🟢 Agent |
 | **Alternative Engine** | 대체품 후보 정렬(가격/평점/인기도/친환경 등) 및 **품절/미존재 상품 발생 시 동일 카테고리 유사 상품 자동 탐색·제안** | 규칙 기반 + 검색 재호출 | 🔧 Tool (Search/Reflection이 호출) |
 | **Deep Link Router** | 최종 장바구니 → 쇼핑몰별 상품/장바구니 URL 생성 (**Phase 1 기본 출력**) | 쇼핑몰별 URL 스킴 매핑 | 🔧 Tool (Orchestrator가 호출) |
-| **쇼핑몰 커넥터 (MCP Server)** | 쇼핑몰별 상품 검색/상세조회/장바구니/주문 기능을 표준 MCP Tool(`search_products`, `get_product_detail`, `add_to_cart`, `place_order` 등)로 노출. API 우선, 비공식 채널은 크롤러로 구현 | MCP Server (GS프레시몰/이마트/컬리/네이버, 각각 독립 배포) | 🔧 Tool (Search/Purchase Agent가 MCP Client로 호출) |
+| **쇼핑몰 커넥터 (MCP Server)** | 쇼핑몰별 상품 검색/상세조회/장바구니/주문 기능을 표준 MCP Tool(`search_products`, `get_product_detail`, `add_to_cart`, `place_order` 등)로 노출. **단일 MCP 서버가 몰별 어댑터(adapter)를 플러그인 형태로 등록**해 호출을 라우팅(예: `malls/gsfresh.py`, `malls/emart.py`) — 신규 몰 추가 시 서버 신설 없이 어댑터만 추가. API 우선, 비공식 채널은 크롤러로 구현 | MCP Server (단일 서버 + 몰별 어댑터: GS프레시몰/이마트/컬리/네이버 등) | 🔧 Tool (Search/Purchase Agent가 MCP Client로 호출) |
+| **Mall Onboarding Agent (반자동)** | 신규 쇼핑몰의 API 문서/샘플 페이지를 분석해 어댑터 코드 스켈레톤(`search_products`/`add_to_cart`/`place_order` 매핑, 셀렉터/URL 스킴)과 검증용 테스트 케이스를 생성. **사람이 리뷰/테스트 후 머지(HITL)** — 생성된 어댑터는 검증 없이 자동 반영되지 않음 | LLM 코드 생성 + 샘플 데이터 기반 테스트 | 🟢 Agent (HITL 필수) |
 | **Purchase Execution Agent (Phase 2)** | 사용자 최종 승인 후 쇼핑몰별 장바구니 담기 → 결제 자동 수행, 주문 결과(영수증/송장) 회수 | LLM Tool-use (MCP Client) → 쇼핑몰별 MCP Server (장바구니/주문 Tool), Browser Automation (Playwright) | 🟢 Agent |
 | **Session Store (단기 메모리)** | 현 요청의 파싱 결과·검색 후보·재계획 시도 이력 등 세션 내 상태 관리. Reflection이 재계획 시 이전 시도를 참고해 동일한 재계획을 반복하지 않도록 함 | Memory MCP (`agentic-ai-common-tools`, SQLite backend, `namespace="session:{session_id}"`, TTL 적용) | ⚪ Infra |
 | **Preference Memory (장기 메모리)** | 세션을 넘어선 장기 사용자 선호도(선호 브랜드, 알러지/제외 식품, 정렬 우선순위, 자주 구매하는 품목, 과거 대체 수락/거절 이력) 저장. Parser/Orchestrator가 다음 요청 처리 시 조회·반영 | Memory MCP (`agentic-ai-common-tools`, `namespace="user:{user_id}"`, TTL 없음; PoC는 SQLite backend, 운영 시 Postgres/Redis backend로 확장) | ⚪ Infra |
@@ -297,18 +297,19 @@ sequenceDiagram
 
 SmartCart Agent Core의 모든 모듈을 LLM 에이전트로 만들 필요는 없습니다. **판단/계획이 필요한 곳만 에이전트**로 두고, **입출력이 정해진 계산/매핑은 에이전트가 호출하는 도구(Tool)**로 구현합니다.
 
-- 🟢 **Agent (LLM 기반, 5개)** — 스스로 상황을 판단하고 다음 행동을 계획함
+- 🟢 **Agent (LLM 기반, 6개)** — 스스로 상황을 판단하고 다음 행동을 계획함
   - **Orchestrator**: 메인 에이전트. Search→Optimize→Reflect 루프를 제어하고 재계획 여부를 결정
   - **Request Parser**: 자연어 요청을 구조화하고, 모호한 항목은 확인 질문 생성
   - **Product Search Agent**: 검색 도구를 호출하며 결과를 보고 다음 검색 전략을 조정
   - **Reflection Module**: Optimizer 결과를 평가하고, 대체 사유를 사용자에게 설명할 문구를 생성
   - **Purchase Execution Agent (Phase 2)**: 자동 구매 실행 및 예외 상황(품절/결제 실패 등) 대응
+  - **Mall Onboarding Agent (반자동)**: 신규 몰의 어댑터 코드/테스트 스켈레톤을 생성해 사람의 리뷰 후 쇼핑몰 커넥터 MCP Server에 추가 (HITL)
 
 - 🔧 **Tool (결정론적 함수/외부 연동, 4개)** — 입력이 같으면 항상 같은 결과를 내는 계산/매핑이거나, 표준 인터페이스로 노출된 외부 연동. 빠르고 저렴하며 테스트하기 쉬움
   - **Optimization Engine**: `optimize_cart()` — 조합 최적화 계산
   - **Alternative Engine**: `get_alternatives()` — 대체품 후보 정렬/필터링
   - **Deep Link Router**: `build_deep_link()` — 쇼핑몰별 URL 생성
-  - **쇼핑몰 커넥터 (MCP Server)**: 쇼핑몰별 API/크롤러를 `search_products`, `get_product_detail`, `add_to_cart`, `place_order` 같은 **MCP Tool**로 표준화. Search/Purchase Agent는 MCP Client로 동일한 방식 호출 → 쇼핑몰 추가/교체 시 에이전트 로직 변경 없이 MCP Server만 추가
+  - **쇼핑몰 커넥터 (MCP Server)**: 단일 MCP 서버가 몰별 어댑터(plugin)를 등록해 `search_products`, `get_product_detail`, `add_to_cart`, `place_order` 같은 **MCP Tool**로 표준화. Search/Purchase Agent는 MCP Client로 동일한 방식 호출 → 신규 몰 추가 시 서버 신설 없이 어댑터만 추가(Mall Onboarding Agent가 초안 생성)
 
 - ⚪ **Infra (데이터/보안 계층, 5개)** — 에이전트가 읽고 쓰는 저장소
   - Session Store (단기 메모리), Preference Memory (장기 메모리), Mall Knowledge Base (RAG), Secrets Vault (Phase 2), Audit Log (Phase 2)
