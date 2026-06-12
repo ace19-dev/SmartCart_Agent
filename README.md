@@ -280,7 +280,7 @@ sequenceDiagram
 | **Orchestrator (Planner)** | 전체 작업을 하위 단계로 분해하고, Search→Optimize→Reflect 루프를 제어. Reflection 결과에 따라 재계획(Replan) 지시 | LLM Agent Loop (ReAct / Plan-Execute) | 🟢 Agent |
 | **Product Search Agent** | 쇼핑몰별 검색 도구 호출, 배송조건/가격/평점/**리뷰 수·판매량(인기도)** 1차 필터링·정렬 | LLM Tool-use (MCP Client) → 쇼핑몰별 MCP Server | 🟢 Agent |
 | **Optimization Engine** | 배송비 포함 총액이 (근사) 예산 내에서 정렬 우선순위(인기도/평점/가격)를 만족하는 조합 계산 (단일몰 vs 분할구매) | 조합 최적화 알고리즘 (Knapsack/Greedy + 제약조건) | 🔧 Tool (Orchestrator/Reflection이 호출) |
-| **Reflection Module** | 산출된 조합이 예산(허용 오차 포함)/배송 제약을 만족하는지 자체 검증, 미충족 시 재계획 트리거. **대체된 항목은 사유 코드(`budget_exceeded`/`delivery_unavailable`/`out_of_stock`)와 설명을 함께 기록** | 규칙 기반 검증 + LLM 평가 | 🟢 Agent |
+| **Reflection Module** | 산출된 조합이 예산(허용 오차 포함)/배송 제약을 만족하는지 자체 검증, 미충족 시 재계획 트리거. **대체된 항목은 사유 코드(`budget_exceeded`/`delivery_unavailable`/`out_of_stock`)와 설명을 함께 기록**. `ranking_priority`는 초기 검색/최적화의 정렬 기준일 뿐, 재계획 시 어떤 조건(용량/수량/브랜드/쇼핑몰 등)을 조정할지는 고정 규칙이 아니라 **LLM이 상황에 맞게 스스로 판단** | 규칙 기반 검증 + LLM 평가 | 🟢 Agent |
 | **Alternative Engine** | 대체품 후보 정렬(가격/평점/인기도/친환경 등) 및 **품절/미존재 상품 발생 시 동일 카테고리 유사 상품 자동 탐색·제안** | 규칙 기반 + 검색 재호출 | 🔧 Tool (Search/Reflection이 호출) |
 | **Deep Link Router** | 최종 장바구니 → 쇼핑몰별 상품/장바구니 URL 생성 (**Phase 1 기본 출력**) | 쇼핑몰별 URL 스킴 매핑 | 🔧 Tool (Orchestrator가 호출) |
 | **쇼핑몰 커넥터 (MCP Server)** | 쇼핑몰별 상품 검색/상세조회/장바구니/주문 기능을 표준 MCP Tool(`search_products`, `get_product_detail`, `add_to_cart`, `place_order` 등)로 노출. API 우선, 비공식 채널은 크롤러로 구현 | MCP Server (쿠팡/이마트/컬리/네이버, 각각 독립 배포) | 🔧 Tool (Search/Purchase Agent가 MCP Client로 호출) |
