@@ -24,9 +24,11 @@ sequenceDiagram
     Search->>Optimizer: 후보군 전달
     Optimizer->>Optimizer: 배송비 포함 조합 비교<br/>(단일몰 vs 분할구매)<br/>+ 인기도 우선순위 반영
 
-    loop 제약조건(근사예산/배송일) 미충족 시 자동 재계획
+    loop 최대 max_replan_attempts(기본 3회)까지 자동 재계획
         Optimizer->>Optimizer: 예산 허용오차(±10%) 초과 또는<br/>배송 미충족 여부 판단
-        alt 미충족
+        alt 충족 또는 재계획 횟수 한도 도달
+            Optimizer->>Optimizer: 루프 종료<br/>(한도 도달 시 best-effort 조합 + 미충족 사유 기록)
+        else 미충족 & 한도 미도달
             Optimizer->>Search: 재계획 요청<br/>(용량/수량 조정, 가성비 브랜드 전환,<br/>배송 가능 몰로 재검색 등)
             Search->>Mall: [MCP Client] search_products()<br/>조정된 조건으로 재검색
             Mall-->>Search: 후보 상품 리스트(갱신)
@@ -34,7 +36,7 @@ sequenceDiagram
         end
     end
 
-    Optimizer-->>UI: 품목별 추천 상품 + 구매 링크 + 총액/예산 충족 여부<br/>+ 대체된 항목의 사유(예산 초과/배송 불가/품절)
+    Optimizer-->>UI: 품목별 추천 상품 + 구매 링크 + 총액/예산 충족 여부<br/>(한도 도달 시 best-effort)<br/>+ 대체/미충족 항목의 사유(예산 초과/배송 불가/품절)
     UI-->>User: 결과 카드(링크 리스트 + 대체 사유 안내) 표시
 
     opt 사용자 대체품 요청

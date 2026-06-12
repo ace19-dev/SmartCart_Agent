@@ -24,9 +24,11 @@ sequenceDiagram
     Search->>Optimizer: Pass candidate set
     Optimizer->>Optimizer: Compare combinations including shipping<br/>(single mall vs. split purchase)<br/>+ apply popularity priority
 
-    loop Auto-replan while constraints (approx. budget/delivery date) unmet
+    loop Auto-replan up to max_replan_attempts (default 3)
         Optimizer->>Optimizer: Check if budget tolerance (±10%) exceeded<br/>or delivery unsatisfied
-        alt Unsatisfied
+        alt Satisfied or replan attempt limit reached
+            Optimizer->>Optimizer: Exit loop<br/>(if limit reached, record best-effort combination + unmet reasons)
+        else Unsatisfied & limit not reached
             Optimizer->>Search: Request replan<br/>(adjust volume/quantity, switch to cost-effective brand,<br/>re-search deliverable malls, etc.)
             Search->>Mall: [MCP Client] search_products()<br/>re-search with adjusted conditions
             Mall-->>Search: Candidate product list (updated)
@@ -34,7 +36,7 @@ sequenceDiagram
         end
     end
 
-    Optimizer-->>UI: Recommended products per item + purchase links + total/budget status<br/>+ reasons for substitutions (over budget/delivery unavailable/out of stock)
+    Optimizer-->>UI: Recommended products per item + purchase links + total/budget status<br/>(best-effort if limit reached)<br/>+ reasons for substitutions/unmet items (over budget/delivery unavailable/out of stock)
     UI-->>User: Show result cards (link list + substitution reasons)
 
     opt User requests an alternative

@@ -285,9 +285,11 @@ sequenceDiagram
     Search->>Optimizer: Pass candidate set
     Optimizer->>Optimizer: Compare combinations including shipping<br/>(single mall vs. split purchase)<br/>+ apply popularity priority
 
-    loop Auto-replan while constraints (approx. budget/delivery date) unmet
+    loop Auto-replan up to max_replan_attempts (default 3)
         Optimizer->>Optimizer: Check if budget tolerance (±10%) exceeded<br/>or delivery unsatisfied
-        alt Unsatisfied
+        alt Satisfied or replan attempt limit reached
+            Optimizer->>Optimizer: Exit loop<br/>(if limit reached, record best-effort combination + unmet reasons)
+        else Unsatisfied & limit not reached
             Optimizer->>Search: Request replan<br/>(adjust volume/quantity, switch to cost-effective brand,<br/>re-search deliverable malls, etc.)
             Search->>Mall: [MCP Client] search_products()<br/>re-search with adjusted conditions
             Mall-->>Search: Candidate product list (updated)
@@ -295,7 +297,7 @@ sequenceDiagram
         end
     end
 
-    Optimizer-->>UI: Recommended products per item + purchase links + total/budget status<br/>+ reasons for substitutions (over budget/delivery unavailable/out of stock)
+    Optimizer-->>UI: Recommended products per item + purchase links + total/budget status<br/>(best-effort if limit reached)<br/>+ reasons for substitutions/unmet items (over budget/delivery unavailable/out of stock)
     UI-->>User: Show result cards (link list + substitution reasons)
 
     opt User requests an alternative
@@ -330,7 +332,7 @@ sequenceDiagram
 | **Orchestrator (Planner)** | Decomposes the overall task into sub-steps and controls the Search→Optimize→Reflect loop. Triggers replanning based on Reflection results | LLM Agent Loop (ReAct / Plan-Execute) | 🟢 Agent |
 | **Product Search Agent** | Calls each shopping mall's search tool and performs initial filtering/sorting by delivery condition/price/rating/**review count·sales (popularity)** | LLM Tool-use (MCP Client) → per-mall MCP Server | 🟢 Agent |
 | **Optimization Engine** | Computes the combination (single mall vs. split purchase) that satisfies the ranking priority (popularity/rating/price) while keeping the total including shipping within the (approximate) budget | Combinatorial optimization algorithm (Knapsack/Greedy + constraints) | 🔧 Tool (called by Orchestrator/Reflection) |
-| **Reflection Module** | Self-validates whether the computed combination satisfies budget (including tolerance)/delivery constraints, and triggers replanning if not. **Records substituted items with a reason code (`budget_exceeded`/`delivery_unavailable`/`out_of_stock`) and explanation**. `ranking_priority` is only the sort criterion for the initial search/optimization — which conditions to adjust during replanning (volume/quantity/brand/shopping mall, etc.) are not fixed rules; **the LLM judges this for itself based on the situation** | Rule-based validation + LLM evaluation | 🟢 Agent |
+| **Reflection Module** | Self-validates whether the computed combination satisfies budget (including tolerance)/delivery constraints, and triggers replanning if not. **Records substituted items with a reason code (`budget_exceeded`/`delivery_unavailable`/`out_of_stock`) and explanation**. `ranking_priority` is only the sort criterion for the initial search/optimization — which conditions to adjust during replanning (volume/quantity/brand/shopping mall, etc.) are not fixed rules; **the LLM judges this for itself based on the situation**. **Replanning is attempted at most `max_replan_attempts` times (default 3)**; once the limit is reached, the best combination found so far is presented as a best-effort result along with the unmet reasons | Rule-based validation + LLM evaluation | 🟢 Agent |
 | **Alternative Engine** | Ranks alternative candidates (price/rating/popularity/eco-friendly, etc.) and **automatically finds/suggests similar products in the same category when an item is out of stock or unavailable** | Rule-based + re-invoking search | 🔧 Tool (called by Search/Reflection) |
 | **Deep Link Router** | Generates per-mall product/cart URLs from the final cart (**Phase 1 primary output**) | Per-mall URL scheme mapping | 🔧 Tool (called by Orchestrator) |
 | **Shopping Mall Connector (MCP Server)** | Exposes each mall's product search/detail lookup/cart/order functions as standard MCP Tools (`search_products`, `get_product_detail`, `add_to_cart`, `place_order`, etc.). API-first, with crawlers for unofficial channels | MCP Server (Coupang/Emart/Kurly/Naver, each independently deployed) | 🔧 Tool (called via MCP Client by Search/Purchase Agent) |
@@ -391,7 +393,7 @@ agents call**.
 | Requirement | How It's Addressed |
 |---|---|
 | **Autonomy** | Unless the user rejects the result, search → optimize → constraint validation → replanning all run automatically without human intervention |
-| **Plan & Replan** | The Orchestrator decomposes goals (budget/delivery time/rating) into sub-tasks, and Reflection automatically replans (adjusting quantity, switching brands, re-searching) when constraints aren't met |
+| **Plan & Replan** | The Orchestrator decomposes goals (budget/delivery time/rating) into sub-tasks, and Reflection automatically replans (adjusting quantity, switching brands, re-searching) when constraints aren't met. **Replanning termination**: after at most `max_replan_attempts` (default 3) tries, if constraints are still unmet, present the best combination found so far (best-effort) along with the unmet reasons, avoiding infinite loops |
 | **Tool Use** | The Search/Purchase Agent acquires real-time data by calling each shopping mall's **MCP Server (Common Tools)** for search, cart, and order functions as standardized tools |
 | **Reflection / Self-verification** | The Reflection module validates the Optimization results and self-improves through the loop on failure |
 | **Transparency** | Items substituted during replanning have their **substitution reason (over budget/delivery unavailable/out of stock)** clearly stated in the final result alongside the original and replacement products |
