@@ -709,8 +709,6 @@ python -m smartcart.optimizer.engine --test
 **알려진 한계** (Step 9에서 옮김, 그대로 적용)
 - `MemorySaver`는 프로세스 메모리 전용 — 재시작하면 대기 중인 `thread_id` 소실
 - FastAPI 멀티 워커 환경에서는 동작 안 함(단일 프로세스 가정)
-- 한 라운드에 여러 `out_of_stock` 품목이 있으면 전부 옵션으로 나열되지만,
-  사용자는 한 번에 하나만 선택 가능 — 나머지는 다음 라운드에서 다시 물어봄
 
 ---
 
@@ -732,6 +730,68 @@ Step 10까지는 `out_of_stock` 위반 중 용량 조건(`min_volume_ml`)이 있
 - `_apply_choice`에 `rename_query` 처리 추가 — 선택된 품목의 `search_query`만
   갱신, `name`/라벨/기존 필터는 그대로 유지
 - `_LLMOption`에 `new_query` 필드 추가, `action` 후보에 `rename_query` 포함
+
+---
+
+## Step 12 — search_filters 동기화 버그 수정 + 품목별 순차 질문으로 전환 ✅
+
+### search_filters 동기화 버그 (`relax_volume`/`multiply_qty`) + exclude_mall 무효화 버그
+
+- `_apply_choice`가 `relax_volume`/`multiply_qty` 선택 시 `request.items[i].min_volume`만
+  바꾸고, 실제 몰 검색에 쓰이는 `state["search_filters"][item]["min_volume_ml"]`은
+  그대로 둬서 — Mock처럼 용량 필터를 실제로 적용하는 어댑터가 붙으면 완화 선택이
+  무의미해지는 버그. 선택 적용 시 `search_filters`의 `min_volume_ml`도 갱신하도록 수정.
+- `search_node`의 `available = [m for m in all_mall_ids if m not in excluded] or None` —
+  등록된 몰이 전부 제외되면 빈 리스트가 `or None`에 의해 "제외 없음(전체 검색)"으로
+  해석되어 `exclude_mall` 선택이 조용히 무효화되는 버그. `or None` 제거, 빈 리스트를
+  그대로 전달해 "검색 대상 없음"이 의도대로 반영되게 수정.
+
+### 한 라운드에 out_of_stock 품목이 여러 개면 순차로 질문
+
+Step 10/11까지는 위반(품목별 out_of_stock + budget/delivery)을 전부 한 곳에 모아
+하나의 질문으로 보여줬는데, 품목이 2개 이상이면 옵션이 쉽게 4개를 넘어 LLM
+큐레이션이 발동했고, 운이 나쁘면 한쪽 품목의 옵션이 통째로 사라져 그 품목은
+이번 라운드에 고를 방법이 없었음(Step 9에서 옮긴 "알려진 한계").
+
+해결 방향(사용자 지시): 위반 하나당(품목 하나, 또는 budget/delivery 묶음 하나)
+옵션 3~5개를 모아 질문 하나를 던지고, 답을 받으면 다음 위반으로 넘어가는 식으로
+**순차적으로** 묻는다. 한 라운드 안에서 여러 질문을 연달아 할 수 있지만,
+`replan_count`는 라운드당 1만 증가(질문 개수와 무관).
+
+- `_curate_options`: 품목별 보장 슬롯 같은 복잡한 로직 없이 원래의 단순한
+  "4개 넘으면 LLM이 4개 고름" 형태로 유지(이제 한 그룹=한 품목/한 묶음만 받으므로
+  그룹 간 경쟁이 없음)
+- `_resolve_choice`: 멀티 인덱스 매칭 불필요 — 단일 선택 매칭으로 유지
+- `_apply_single_choice(request, search_filters, excluded_malls, choice)`: 선택
+  하나를 적용해 갱신된 값을 반환하는 순수 함수로 분리(시퀀스 루프에서 누적 적용)
+- `_ask_and_apply(label, opts, request, search_filters, excluded_malls)`: 옵션
+  목록으로 질문 하나를 던지고(`interrupt()`), 답을 즉시 적용. best-effort를
+  선택하면 `(.., gave_up=True)`를 반환해 호출 측이 남은 질문을 건너뛰게 함
+- `clarify_node`: out_of_stock 위반마다 `_ask_and_apply` 호출(품목명을 라벨로),
+  이어서 budget/delivery 위반이 있으면 "예산/배송" 묶음으로 한 번 더 호출.
+  어디서든 best-effort가 나오면 즉시 `{"accepted_best_effort": True, "replan_count": +1}`
+  반환, 모두 답하면 누적된 request/search_filters/excluded_malls로 한 번에
+  `replan_count: +1` 반환
+
+**버그 발견 및 수정**: 한 노드 안에서 `interrupt()`를 두 번째로 호출하면
+LangGraph가 `snapshot.next`를 빈 튜플로 주는 현상이 있어, `_get_interrupt()`가
+`if snapshot.next:`로 게이트하면 두 번째 이후의 질문을 "대기 중 없음"으로
+잘못 판단해 누락시킴. `snapshot.next` 체크를 제거하고 `tasks`의 `interrupts`
+유무로만 판단하도록 수정.
+
+**verify** ✅
+```bash
+# 품목 2개(우유: 용량 부족, zzxx: 검색 결과 0건) 동시 out_of_stock
+# → Q1(우유, 5개 옵션) 답 → Q2(zzxx, 4개 옵션) 답 → 둘 다 적용되고 replan_count는 1만 증가
+# → 재검색 후 예산 초과가 새로 발견되면 2번째 라운드(Q3, 예산/배송)로 정상 진행
+
+# Q1에서 바로 best-effort 선택 시: Q2를 묻지 않고 즉시 라운드 종료,
+# accepted_best_effort=True, replan_count +1, 두 품목 모두 미적용 상태로 유지
+
+# 회귀 확인 — 기존 CLI 시나리오(Step 10 동일)
+printf "1\n4\n" | python -m smartcart.main --mock-parse
+# → [우유] 질문 → [예산/배송] 질문 → 최종 결과/재계획 횟수 Step 10과 동일
+```
 
 ---
 

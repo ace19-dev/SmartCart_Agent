@@ -5,7 +5,10 @@
                                   | clarify → search (불만족 시 매 라운드, HITL)]
 
 reflect가 불만족이면 매 라운드(최대 MAX_REPLAN_ATTEMPTS회) clarify로 가서
-사용자에게 선택지를 묻습니다. 선택지는:
+사용자에게 선택지를 묻습니다. 위반이 여러 개(품목별 out_of_stock + budget/delivery
+등)면 한 화면에 다 몰아넣지 않고, 위반 하나당 질문 하나씩 순서대로 던집니다.
+어느 질문에서든 best-effort를 고르면 남은 질문 없이 그 라운드를 즉시 끝냅니다.
+질문 개수와 관계없이 한 라운드는 replan_count를 1만 증가시킵니다. 선택지는:
   - out_of_stock 위반(용량 조건): 이미 가진 후보 데이터로 결정론적으로 계산(숫자 검증됨)
   - out_of_stock 위반(검색 결과 0건): LLM이 검색어/가격 상한 대안을 제안하고,
     drop_item은 항상 보장된 폴백으로 추가
@@ -272,7 +275,9 @@ class _CurationResult(BaseModel):
 def _curate_options(options: list[dict]) -> list[dict]:
     """선택지가 많을 때만 LLM으로 다양하고 유용한 4개를 고릅니다.
 
-    숫자는 이미 전부 검증/제안된 값이고, LLM은 그중 어떤 걸 보여줄지만 고릅니다.
+    품목별로 질문을 따로 던지므로(각 호출은 한 품목/한 그룹의 옵션만 받음),
+    여기서는 그 그룹 안에서만 추리면 됩니다. 숫자는 이미 전부 검증/제안된
+    값이고, LLM은 그중 어떤 걸 보여줄지만 고릅니다.
     """
     if len(options) <= 4:
         return options
@@ -325,13 +330,11 @@ def _resolve_choice(answer: str, options: list[dict]) -> dict:
     return options[0]
 
 
-def _apply_choice(state: SmartCartState, choice: dict) -> dict:
-    """선택된 옵션을 실제로 request/search_filters/excluded_malls에 반영."""
+def _apply_single_choice(
+    request: ParsedRequest, search_filters: dict, excluded_malls: list, choice: dict,
+) -> tuple[ParsedRequest, dict, list]:
+    """선택 하나를 request/search_filters/excluded_malls에 반영해 갱신된 값을 반환."""
     action = choice["action"]
-    request = state["request"]
-
-    if action == "accept_best_effort":
-        return {"accepted_best_effort": True, "replan_count": state["replan_count"] + 1}
 
     if action == "drop_item":
         request = request.model_copy(update={
@@ -368,19 +371,12 @@ def _apply_choice(state: SmartCartState, choice: dict) -> dict:
             "delivery": request.delivery.model_copy(update={"date": choice["new_delivery_date"]})
         })
 
-    updates: dict = {
-        "request": request,
-        "replan_count": state["replan_count"] + 1,
-        "accepted_best_effort": False,
-    }
-
     if action == "exclude_mall" and choice.get("excluded_mall"):
-        updates["excluded_malls"] = list(set(state.get("excluded_malls", [])) | {choice["excluded_mall"]})
+        excluded_malls = list(set(excluded_malls) | {choice["excluded_mall"]})
     if action == "adjust_max_price" and choice.get("item_name") and choice.get("new_max_price"):
-        sf = dict(state["search_filters"])
         item_name = choice["item_name"]
-        sf[item_name] = {**sf.get(item_name, {}), "max_price": choice["new_max_price"]}
-        updates["search_filters"] = sf
+        search_filters = dict(search_filters)
+        search_filters[item_name] = {**search_filters.get(item_name, {}), "max_price": choice["new_max_price"]}
     if action in ("multiply_qty", "relax_volume") and choice.get("item_name"):
         # request.items의 min_volume은 바뀌었지만, 실제 몰 검색에 쓰이는
         # search_filters는 그대로면 다음 라운드 검색이 옛 기준으로 후보를
@@ -388,18 +384,50 @@ def _apply_choice(state: SmartCartState, choice: dict) -> dict:
         item_name = choice["item_name"]
         updated_item = next((i for i in request.items if i.name == item_name), None)
         if updated_item is not None:
-            sf = dict(state["search_filters"])
-            sf[item_name] = {**sf.get(item_name, {}), "min_volume_ml": updated_item.min_volume_ml}
-            updates["search_filters"] = sf
+            search_filters = dict(search_filters)
+            search_filters[item_name] = {**search_filters.get(item_name, {}), "min_volume_ml": updated_item.min_volume_ml}
 
-    return updates
+    return request, search_filters, excluded_malls
+
+
+_BEST_EFFORT_OPTION = {"action": "accept_best_effort", "description": "지금까지 찾은 결과로 진행 (best-effort)"}
+
+
+def _ask_and_apply(
+    label: str, opts: list[dict], request: ParsedRequest, search_filters: dict, excluded_malls: list,
+) -> tuple[ParsedRequest, dict, list, bool]:
+    """opts(특정 품목 또는 예산/배송 그룹의 선택지)로 질문 하나를 던지고, 답을 바로 적용합니다.
+
+    반환값의 마지막 bool은 사용자가 이번 질문에서 best-effort를 선택했는지 여부 —
+    True면 호출 측이 남은 질문을 더 묻지 않고 즉시 라운드를 끝내야 합니다.
+    """
+    opts = _curate_options(opts) + [_BEST_EFFORT_OPTION]
+    question = "\n".join([
+        f"[{label}] 조건을 그대로 만족시키지 못했습니다. 어떻게 할까요?",
+        *[f"{i}. {o['description']}" for i, o in enumerate(opts, 1)],
+    ])
+    answer = interrupt({"question": question, "options": opts})
+    choice = _resolve_choice(answer, opts)
+    if choice["action"] == "accept_best_effort":
+        return request, search_filters, excluded_malls, True
+    request, search_filters, excluded_malls = _apply_single_choice(
+        request, search_filters, excluded_malls, choice,
+    )
+    return request, search_filters, excluded_malls, False
 
 
 def clarify_node(state: SmartCartState) -> dict:
+    """위반당 품목 하나씩(필요하면 예산/배송 한 그룹도) 순서대로 질문합니다.
+
+    품목이 N개면 N번(+예산/배송 1번) 질문을 차례로 던지고, 그중 어디서든
+    best-effort를 고르면 남은 질문 없이 즉시 라운드를 끝냅니다. 모두 답하면
+    한 번에 적용하고 replan_count를 1만 증가시킵니다(질문 개수와 무관하게 1라운드).
+    """
     request = state["request"]
     violations = state["constraint"].violations
+    search_filters = state["search_filters"]
+    excluded_malls = state.get("excluded_malls", [])
 
-    options: list[dict] = []
     for v in violations:
         if v.reason != "out_of_stock":
             continue
@@ -407,35 +435,43 @@ def clarify_node(state: SmartCartState) -> dict:
         item = next((i for i in request.items if i.name == item_name), None)
         if item is None:
             continue
+
         if item.min_volume_ml is not None:
             products = state["candidates"].get(item_name, [])
             sorted_products = sorted(products, key=lambda p: _sort_key(p, request.ranking_priority))
-            options += _compute_volume_options(item_name, item, sorted_products)
+            opts = _compute_volume_options(item_name, item, sorted_products)
         else:
             # 용량 조건과 무관하게 검색 결과가 0건인 경우 — LLM이 검색어/가격 대안을
             # 제안하고, drop_item은 항상 보장된 폴백으로 추가
-            options += _propose_item_not_found_options(item_name, request)
-            options.append({
+            opts = _propose_item_not_found_options(item_name, request)
+            opts.append({
                 "action": "drop_item",
                 "item_name": item_name,
                 "description": f"{item_name}은 제외하고 나머지만 진행",
             })
 
+        request, search_filters, excluded_malls, gave_up = _ask_and_apply(
+            item_name, opts, request, search_filters, excluded_malls,
+        )
+        if gave_up:
+            return {"accepted_best_effort": True, "replan_count": state["replan_count"] + 1}
+
     other_violations = [v for v in violations if v.reason != "out_of_stock"]
     if other_violations:
-        options += _propose_filter_options(state, other_violations)
+        opts = _propose_filter_options(state, other_violations)
+        request, search_filters, excluded_malls, gave_up = _ask_and_apply(
+            "예산/배송", opts, request, search_filters, excluded_malls,
+        )
+        if gave_up:
+            return {"accepted_best_effort": True, "replan_count": state["replan_count"] + 1}
 
-    options.append({"action": "accept_best_effort", "description": "지금까지 찾은 결과로 진행 (best-effort)"})
-    options = _curate_options(options)
-
-    question = "\n".join([
-        "다음 조건을 그대로 만족시키지 못했습니다. 어떻게 할까요?",
-        *[f"{i}. {o['description']}" for i, o in enumerate(options, 1)],
-    ])
-
-    answer = interrupt({"question": question, "options": options})
-    choice = _resolve_choice(answer, options)
-    return _apply_choice(state, choice)
+    return {
+        "request": request,
+        "search_filters": search_filters,
+        "excluded_malls": excluded_malls,
+        "replan_count": state["replan_count"] + 1,
+        "accepted_best_effort": False,
+    }
 
 
 # ── 조건부 라우팅 ──────────────────────────────────────────────────────────────
@@ -483,11 +519,17 @@ def build_graph():
 
 
 def _get_interrupt(graph, config: dict) -> Optional[dict]:
+    """대기 중인 인터럽트가 있으면 반환합니다.
+
+    주의: 같은 노드(clarify_node)가 한 번의 실행 안에서 interrupt()를 여러 번
+    호출하는 경우(품목별 순차 질문), 두 번째 이상의 인터럽트에서는
+    snapshot.next가 빈 튜플로 나오는 LangGraph 동작이 있어 snapshot.next로
+    게이트하면 안 됨 — tasks의 interrupts 유무로만 판단.
+    """
     snapshot = graph.get_state(config)
-    if snapshot.next:
-        for task in snapshot.tasks:
-            if task.interrupts:
-                return task.interrupts[0].value
+    for task in snapshot.tasks:
+        if task.interrupts:
+            return task.interrupts[0].value
     return None
 
 
