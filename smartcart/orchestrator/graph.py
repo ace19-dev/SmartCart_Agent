@@ -6,7 +6,9 @@
 
 reflect가 불만족이면 매 라운드(최대 MAX_REPLAN_ATTEMPTS회) clarify로 가서
 사용자에게 선택지를 묻습니다. 선택지는:
-  - out_of_stock 위반: 이미 가진 후보 데이터로 결정론적으로 계산(숫자 검증됨)
+  - out_of_stock 위반(용량 조건): 이미 가진 후보 데이터로 결정론적으로 계산(숫자 검증됨)
+  - out_of_stock 위반(검색 결과 0건): LLM이 검색어/가격 상한 대안을 제안하고,
+    drop_item은 항상 보장된 폴백으로 추가
   - budget/delivery 위반: LLM이 제안(예산/배송일 조정, 몰 제외, 가격 상한 등 —
     예전 replan_node가 혼자 결정했던 것과 같은 종류의 조정을, 이제는 옵션으로
     제시하고 사용자가 고른 것만 적용)
@@ -91,7 +93,8 @@ def search_node(state: SmartCartState) -> dict:
     for item in state["request"].items:
         raw_kwargs = state["search_filters"].get(item.name, {})
         filters = SearchFilters(**{k: v for k, v in raw_kwargs.items() if k in valid_fields})
-        result = server.search_products(item.name, mall_ids=available, filters=filters)
+        query = item.search_query or item.name
+        result = server.search_products(query, mall_ids=available, filters=filters)
         if result.success:
             candidates[item.name] = [Product(**p) for p in json.loads(result.to_tool_str())]
         else:
@@ -176,12 +179,13 @@ def _compute_volume_options(item_name: str, item: Item, sorted_products: list[Pr
 
 class _LLMOption(BaseModel):
     description: str
-    action: str  # "adjust_budget" | "adjust_delivery" | "exclude_mall" | "adjust_max_price"
+    action: str  # "adjust_budget" | "adjust_delivery" | "exclude_mall" | "adjust_max_price" | "rename_query"
     item_name: Optional[str] = None
     new_budget_amount: Optional[int] = None
     new_delivery_date: Optional[str] = None
     excluded_mall: Optional[str] = None
     new_max_price: Optional[int] = None
+    new_query: Optional[str] = None
 
 
 class _LLMOptionBatch(BaseModel):
@@ -221,6 +225,40 @@ def _propose_filter_options(state: SmartCartState, violations: list) -> list[dic
         return [o.model_dump() for o in result.options]
     except Exception:
         logger.warning("clarify: 필터 조정 옵션 생성 실패", exc_info=True)
+        return []
+
+
+def _propose_item_not_found_options(item_name: str, request: ParsedRequest) -> list[dict]:
+    """out_of_stock 위반(용량 조건과 무관 — 검색 결과 자체가 0건)에 대해 LLM이
+    검색어/가격 조정 대안을 제안. drop_item은 호출 측에서 항상 별도로 보장.
+    """
+    from core.llm import make_llm
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    prompt = (
+        f"'{item_name}' 품목을 등록된 어떤 쇼핑몰에서도 찾지 못했습니다 (검색 결과 0건).\n"
+        f"요청 맥락: 예산 {request.budget.amount:,}원 ({request.budget.type}), "
+        f"배송 기한 {request.delivery.date}\n\n"
+        "이 품목을 찾을 수 있게 하는, 서로 다른 방향의 선택지 1~2개를 만드세요. "
+        "각 선택지는 description(사용자에게 보여줄 한국어 한 줄 설명)과 "
+        "action(rename_query: 더 일반적이거나 다른 검색어로 재검색 / "
+        "adjust_max_price: 가격 상한을 높여 재검색 중 하나), "
+        "그리고 해당 액션에 필요한 값(new_query 또는 new_max_price)을 채워야 합니다."
+    )
+    try:
+        llm = make_llm(structured_output=_LLMOptionBatch)
+        result: _LLMOptionBatch = llm.invoke([
+            SystemMessage(content="SmartCart 재계획 에이전트. 검색 결과가 없는 품목을 찾기 위한 선택지를 제안하세요."),
+            HumanMessage(content=prompt),
+        ])
+        options = []
+        for o in result.options:
+            d = o.model_dump()
+            d["item_name"] = item_name  # 모델이 다른 값을 채워도 항상 이 품목으로 고정
+            options.append(d)
+        return options
+    except Exception:
+        logger.warning("clarify: 품목 미발견(out_of_stock) 옵션 생성 실패", exc_info=True)
         return []
 
 
@@ -311,6 +349,13 @@ def _apply_choice(state: SmartCartState, choice: dict) -> dict:
                 i = i.model_copy(update={"min_volume": None})
             new_items.append(i)
         request = request.model_copy(update={"items": new_items})
+    elif action == "rename_query" and choice.get("new_query"):
+        new_items = []
+        for i in request.items:
+            if i.name == choice["item_name"]:
+                i = i.model_copy(update={"search_query": choice["new_query"]})
+            new_items.append(i)
+        request = request.model_copy(update={"items": new_items})
     elif action == "adjust_budget" and choice.get("new_budget_amount"):
         request = request.model_copy(update={
             "budget": request.budget.model_copy(update={"amount": choice["new_budget_amount"]})
@@ -347,11 +392,21 @@ def clarify_node(state: SmartCartState) -> dict:
             continue
         item_name = v.detail.split(":")[0].strip()
         item = next((i for i in request.items if i.name == item_name), None)
-        if item is None or item.min_volume_ml is None:
+        if item is None:
             continue
-        products = state["candidates"].get(item_name, [])
-        sorted_products = sorted(products, key=lambda p: _sort_key(p, request.ranking_priority))
-        options += _compute_volume_options(item_name, item, sorted_products)
+        if item.min_volume_ml is not None:
+            products = state["candidates"].get(item_name, [])
+            sorted_products = sorted(products, key=lambda p: _sort_key(p, request.ranking_priority))
+            options += _compute_volume_options(item_name, item, sorted_products)
+        else:
+            # 용량 조건과 무관하게 검색 결과가 0건인 경우 — LLM이 검색어/가격 대안을
+            # 제안하고, drop_item은 항상 보장된 폴백으로 추가
+            options += _propose_item_not_found_options(item_name, request)
+            options.append({
+                "action": "drop_item",
+                "item_name": item_name,
+                "description": f"{item_name}은 제외하고 나머지만 진행",
+            })
 
     other_violations = [v for v in violations if v.reason != "out_of_stock"]
     if other_violations:

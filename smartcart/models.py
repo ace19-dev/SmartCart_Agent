@@ -33,6 +33,7 @@ class Item(BaseModel):
     unit: str | None = None        # "봉지" | "개" | "묶음"
     category: str | None = None    # "과일" | "유제품" | "베이커리"
     min_volume: str | None = None  # "2L", "500ml" 등 문자열 그대로
+    search_query: str | None = None  # clarify에서 검색어를 바꾼 경우(None이면 name 사용)
 
     @property
     def min_volume_ml(self) -> int | None:

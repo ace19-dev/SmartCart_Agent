@@ -714,6 +714,27 @@ python -m smartcart.optimizer.engine --test
 
 ---
 
+## Step 11 — out_of_stock(검색 결과 0건) 위반에 LLM 대안 옵션 추가 ✅
+
+Step 10까지는 `out_of_stock` 위반 중 용량 조건(`min_volume_ml`)이 있는 경우만
+`_compute_volume_options`로 선택지를 만들었고, 단순히 검색 결과가 0건인
+품목(용량과 무관)은 어떤 선택지도 생성되지 않아 다른 위반이 없으면
+"지금까지 결과로 진행"만 남는 문제가 있었음.
+
+- `Item`에 `search_query: str | None` 필드 추가 — 표시용 `name`은 그대로 두고,
+  실제 몰 검색에 쓰는 질의어만 바꿀 수 있게 분리 (`candidates`/`search_filters`
+  딕셔너리 키는 계속 `name`이라 기존 필터가 유실되지 않음)
+- `search_node`: `server.search_products(item.search_query or item.name, ...)`
+- `_propose_item_not_found_options(item_name, request)` 추가 — 검색 결과 0건인
+  품목에 대해 LLM이 `rename_query`(다른/더 일반적인 검색어) 또는
+  `adjust_max_price` 선택지를 1~2개 제안. `drop_item`은 호출 측(`clarify_node`)이
+  항상 별도로 보장
+- `_apply_choice`에 `rename_query` 처리 추가 — 선택된 품목의 `search_query`만
+  갱신, `name`/라벨/기존 필터는 그대로 유지
+- `_LLMOption`에 `new_query` 필드 추가, `action` 후보에 `rename_query` 포함
+
+---
+
 ## Phase 2 안전 설계 원칙 (자동 구매 구현 전 필독)
 
 > Phase 2(장바구니 담기 ~ 결제 자동화)를 구현할 때 반드시 아래 원칙을 지켜야 합니다.
