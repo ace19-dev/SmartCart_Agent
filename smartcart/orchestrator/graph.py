@@ -85,7 +85,10 @@ def search_node(state: SmartCartState) -> dict:
     server = _build_default_server()
     excluded = set(state.get("excluded_malls", []))
     all_mall_ids = list(server._adapters.keys())
-    available = [m for m in all_mall_ids if m not in excluded] or None
+    # 주의: 전부 제외돼 빈 리스트가 되어도 None으로 바꾸지 않음 — None은
+    # search_products()에 "전체 검색"으로 해석되어 제외가 무효화되므로, 빈
+    # 리스트 그대로 넘겨 "검색 대상 없음"이 의도대로 반영되게 함
+    available = [m for m in all_mall_ids if m not in excluded]
 
     candidates: dict = {}
     valid_fields = set(SearchFilters.model_fields.keys())
@@ -378,6 +381,16 @@ def _apply_choice(state: SmartCartState, choice: dict) -> dict:
         item_name = choice["item_name"]
         sf[item_name] = {**sf.get(item_name, {}), "max_price": choice["new_max_price"]}
         updates["search_filters"] = sf
+    if action in ("multiply_qty", "relax_volume") and choice.get("item_name"):
+        # request.items의 min_volume은 바뀌었지만, 실제 몰 검색에 쓰이는
+        # search_filters는 그대로면 다음 라운드 검색이 옛 기준으로 후보를
+        # 걸러내 완화/조정이 무의미해짐 — 같은 값으로 맞춰줌
+        item_name = choice["item_name"]
+        updated_item = next((i for i in request.items if i.name == item_name), None)
+        if updated_item is not None:
+            sf = dict(state["search_filters"])
+            sf[item_name] = {**sf.get(item_name, {}), "min_volume_ml": updated_item.min_volume_ml}
+            updates["search_filters"] = sf
 
     return updates
 
