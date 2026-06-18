@@ -806,10 +806,10 @@ printf "1\n4\n" | python -m smartcart.main --mock-parse
 
 - 새 의존성: `langgraph-checkpoint-sqlite`. 설치된 `langgraph==0.2.76`이
   `langgraph-checkpoint<3.0.0`을 요구하므로 `pip install langgraph-checkpoint-sqlite`를
-  그냥 실행하면 호환 안 되는 4.x가 같이 올라옴 — 반드시
-  `pip install "langgraph-checkpoint-sqlite<3.0.0" "langgraph-checkpoint<3.0.0,>=2.0.10"`로
-  버전을 고정해서 설치해야 함 (이 저장소엔 아직 requirements.txt가 없어서 직접
-  적어둠 — 새 환경에 설치할 때 위 명령을 그대로 사용)
+  그냥 실행하면 호환 안 되는 4.x가 같이 올라와 `SqliteSaver.put()`이 런타임에
+  깨짐(import는 되지만 호출 시 `AttributeError`) — `requirements.txt`(Step 14)에
+  `langgraph-checkpoint==2.1.2`로 고정해뒀으니 `pip install -r requirements.txt`로
+  설치/재설치하면 맞춰짐
 - `smartcart/config.py`: `CHECKPOINT_DB_PATH` 추가 — 기본값은 저장소 루트의
   `data/checkpoints.sqlite3` (env로 재정의 가능)
 - `smartcart/orchestrator/graph.py`: `MemorySaver()` → `SqliteSaver(sqlite3.connect(
@@ -831,6 +831,40 @@ printf "1\n4\n" | python -m smartcart.main --mock-parse
 # 회귀 확인 — 기존 CLI 시나리오(Step 12와 동일)
 printf "1\n4\n" | python -m smartcart.main --mock-parse
 # → 결과 동일 (체크포인터 교체가 동작에 영향 없음 확인)
+```
+
+---
+
+## Step 14 — requirements.txt 추가 ✅
+
+저장소에 의존성 매니페스트가 전혀 없어서, 새 환경에서 무엇을 설치해야 하는지
+알 수 없었음. `smartcart/*.py`가 실제로 import하는 pip 패키지만(`core`/`mcp`는
+agentic-ai-common-tools에서 sys.path로 가져오는 거라 제외) 현재 동작이 확인된
+버전으로 고정해 `requirements.txt`를 추가.
+
+- `pydantic`, `python-dotenv`, `fastapi`, `uvicorn`(서버 실행용), `langchain-core`,
+  `langgraph`, `langgraph-checkpoint`, `langgraph-checkpoint-sqlite`,
+  `typing_extensions`
+- agentic-ai-common-tools 쪽 의존성은 그 저장소의 `requirements.txt`를 따로
+  설치하라고 주석에 명시(이 파일이 관리하는 범위가 아님)
+- **발견한 사실**: agentic-ai-common-tools/requirements.txt는 `langgraph>=0.2.76`처럼
+  하한선만 박아둬서, 오늘 그 파일을 그대로 새로 설치하면 PyPI 최신 버전(예:
+  langchain 1.x)이 깔리는데 이는 이 코드가 쓰는 langgraph==0.2.76 API와 호환되지
+  않음(실제 작업 환경은 예전에 만들어져 우연히 호환 버전 조합으로 고정돼 있던
+  것). 이건 별도 저장소의 사전 존재 이슈라 그대로 두고, 이 requirements.txt
+  주석에만 사실을 남겨둠 — agentic-ai-common-tools 쪽을 고치는 건 별도 작업
+
+**verify** ✅
+```bash
+# 빈 venv에 requirements.txt만 설치 → pip check 충돌 없음, smartcart import 정상
+python3 -m venv /tmp/test && /tmp/test/bin/pip install -r requirements.txt
+/tmp/test/bin/pip check  # → No broken requirements found.
+/tmp/test/bin/python -c "import smartcart.config; import smartcart.orchestrator.graph"
+
+# (대조 실험) langgraph-checkpoint-sqlite만 버전 고정 없이 설치하면 4.x가 같이
+# 올라와 import는 되지만 graph.start() 호출 시 SqliteSaver.put()에서
+# AttributeError: 'JsonPlusSerializer' object has no attribute 'dumps' 발생 →
+# requirements.txt의 langgraph-checkpoint==2.1.2 고정이 이 문제를 막아줌
 ```
 
 ---
