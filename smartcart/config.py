@@ -53,6 +53,11 @@ os.environ.setdefault("LOCAL_LLM_API_KEY", LOCAL_LLM_API_KEY)
 MAX_REPLAN_ATTEMPTS: int = int(os.getenv("MAX_REPLAN_ATTEMPTS", "3"))
 BUDGET_SOFT_TOLERANCE_PCT: float = float(os.getenv("BUDGET_SOFT_TOLERANCE_PCT", "10"))
 
+# clarify(HITL) 대화 상태(thread_id별 체크포인트)를 파일 DB에 영속화 — 프로세스
+# 재시작 후에도 답변 대기 중이던 대화를 이어갈 수 있게 함 (MemorySaver는 재시작 시 소실)
+_default_checkpoint_db = Path(__file__).resolve().parents[1] / "data" / "checkpoints.sqlite3"
+CHECKPOINT_DB_PATH: str = os.getenv("CHECKPOINT_DB_PATH", str(_default_checkpoint_db))
+
 # ── 쇼핑몰 커넥터 API ──────────────────────────────────────────────────────────
 # 네이버 검색(쇼핑) Open API — https://developers.naver.com 에서 발급
 # (gs_fresh/emart/kurly는 공개 검색 API가 없어 Mock 어댑터를 유지)

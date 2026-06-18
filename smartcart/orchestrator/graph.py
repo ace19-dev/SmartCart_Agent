@@ -21,16 +21,18 @@ from __future__ import annotations
 import json
 import logging
 import math
+import sqlite3
 import uuid
+from pathlib import Path
 from typing import Optional
 from typing_extensions import TypedDict
 
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command, interrupt
 from pydantic import BaseModel
 
-from smartcart.config import MAX_REPLAN_ATTEMPTS
+from smartcart.config import CHECKPOINT_DB_PATH, MAX_REPLAN_ATTEMPTS
 from smartcart.connector.enrich import enrich_volume_ml
 from smartcart.connector.malls.base import SearchFilters
 from smartcart.connector.server import _build_default_server
@@ -43,7 +45,12 @@ from smartcart.router.deeplink import build_deep_link
 
 logger = logging.getLogger(__name__)
 
-_checkpointer = MemorySaver()
+# 파일 기반 SQLite에 저장 — 프로세스가 재시작돼도 clarify 대화(thread_id별
+# 체크포인트)가 살아있게 함. check_same_thread=False는 SqliteSaver가 단일
+# connection을 여러 스레드(FastAPI 요청 등)에서 공유하기 위해 필요.
+Path(CHECKPOINT_DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+_checkpointer = SqliteSaver(sqlite3.connect(CHECKPOINT_DB_PATH, check_same_thread=False))
+_checkpointer.setup()
 
 
 class SmartCartState(TypedDict):

@@ -706,9 +706,13 @@ python -m smartcart.optimizer.engine --test
 # → satisfied=true, violations=[] (이전과 동일, 영향 없음)
 ```
 
-**알려진 한계** (Step 9에서 옮김, 그대로 적용)
-- `MemorySaver`는 프로세스 메모리 전용 — 재시작하면 대기 중인 `thread_id` 소실
-- FastAPI 멀티 워커 환경에서는 동작 안 함(단일 프로세스 가정)
+**알려진 한계** (Step 9에서 옮김, Step 13에서 일부 해소)
+- ~~`MemorySaver`는 프로세스 메모리 전용 — 재시작하면 대기 중인 `thread_id` 소실~~ →
+  Step 13에서 SQLite 체크포인터로 교체해 해소
+- FastAPI 멀티 워커 환경: SQLite 파일을 워커끼리 공유하므로 Step 13 이후로는
+  동작은 하지만, 동시 쓰기가 몰리면 SQLite 락 경합으로 느려질 수 있음(소규모
+  트래픽 가정. 본격적인 멀티 워커/분산 환경이 필요해지면 Postgres 체크포인터로
+  교체하기로 결정 — `langgraph-checkpoint-postgres`)
 
 ---
 
@@ -791,6 +795,42 @@ LangGraph가 `snapshot.next`를 빈 튜플로 주는 현상이 있어, `_get_int
 # 회귀 확인 — 기존 CLI 시나리오(Step 10 동일)
 printf "1\n4\n" | python -m smartcart.main --mock-parse
 # → [우유] 질문 → [예산/배송] 질문 → 최종 결과/재계획 횟수 Step 10과 동일
+```
+
+---
+
+## Step 13 — clarify 체크포인터를 MemorySaver → SQLite로 교체 ✅
+
+`MemorySaver`는 프로세스 메모리에만 저장되어 서버가 재시작되면 답변을 기다리던
+`thread_id`가 전부 사라지는 문제(Step 9에서 옮긴 알려진 한계)를 해소.
+
+- 새 의존성: `langgraph-checkpoint-sqlite`. 설치된 `langgraph==0.2.76`이
+  `langgraph-checkpoint<3.0.0`을 요구하므로 `pip install langgraph-checkpoint-sqlite`를
+  그냥 실행하면 호환 안 되는 4.x가 같이 올라옴 — 반드시
+  `pip install "langgraph-checkpoint-sqlite<3.0.0" "langgraph-checkpoint<3.0.0,>=2.0.10"`로
+  버전을 고정해서 설치해야 함 (이 저장소엔 아직 requirements.txt가 없어서 직접
+  적어둠 — 새 환경에 설치할 때 위 명령을 그대로 사용)
+- `smartcart/config.py`: `CHECKPOINT_DB_PATH` 추가 — 기본값은 저장소 루트의
+  `data/checkpoints.sqlite3` (env로 재정의 가능)
+- `smartcart/orchestrator/graph.py`: `MemorySaver()` → `SqliteSaver(sqlite3.connect(
+  CHECKPOINT_DB_PATH, check_same_thread=False))` + `_checkpointer.setup()`.
+  `from_conn_string()`(context manager) 대신 connection을 직접 만들어 넘긴 이유:
+  `_checkpointer`가 모듈 전역 싱글톤으로 프로세스 생애 동안 계속 쓰이는데,
+  context manager는 `with` 블록을 벗어나면 connection을 닫아버려 이 용도엔
+  안 맞음. `check_same_thread=False`는 FastAPI가 다른 스레드에서 같은
+  connection을 쓸 수 있어야 해서 필요
+- `.gitignore`에 `/data/` 추가 — SQLite DB 파일은 커밋하지 않음
+
+**verify** ✅
+```bash
+# 프로세스 재시작 후에도 대화가 이어지는지 확인 — 별도 두 프로세스로 실행
+# (1번째 프로세스) start() 호출 → thread_id 출력 후 프로세스 종료
+# (2번째 프로세스, 새 PID) 그 thread_id로 resume() 호출
+# → interrupt=None, replan_count=1 정상 반환 (재시작 전 대화를 정확히 이어받음)
+
+# 회귀 확인 — 기존 CLI 시나리오(Step 12와 동일)
+printf "1\n4\n" | python -m smartcart.main --mock-parse
+# → 결과 동일 (체크포인터 교체가 동작에 영향 없음 확인)
 ```
 
 ---
