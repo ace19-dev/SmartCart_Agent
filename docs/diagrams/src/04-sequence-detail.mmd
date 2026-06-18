@@ -24,15 +24,22 @@ sequenceDiagram
     Search->>Optimizer: 후보군 전달
     Optimizer->>Optimizer: 배송비 포함 조합 비교<br/>(단일몰 vs 분할구매)<br/>+ 인기도 우선순위 반영
 
-    loop 최대 max_replan_attempts(기본 3회)까지 자동 재계획
+    loop 최대 max_replan_attempts(기본 3회) 질문 라운드까지
         Optimizer->>Optimizer: 예산 허용오차(±10%) 초과 또는<br/>배송 미충족 여부 판단
-        alt 충족 또는 재계획 횟수 한도 도달
+        alt 충족 또는 질문 라운드 한도 도달
             Optimizer->>Optimizer: 루프 종료<br/>(한도 도달 시 best-effort 조합 + 미충족 사유 기록)
-        else 미충족 & 한도 미도달
-            Optimizer->>Search: 재계획 요청<br/>(용량/수량 조정, 가성비 브랜드 전환,<br/>배송 가능 몰로 재검색 등)
-            Search->>Mall: [MCP Client] search_products()<br/>조정된 조건으로 재검색
-            Mall-->>Search: 후보 상품 리스트(갱신)
-            Search->>Optimizer: 후보군 재전달
+        else 미충족 & 한도 미도달 → 매 라운드 사용자에게 질문(HITL)
+            Optimizer-->>UI: 선택지 제시(interrupt)<br/>· 용량 묶음구매/조건완화/품목제외(검증된 값, 코드가 계산)<br/>· 예산/배송일/제외몰 조정(LLM이 제안)<br/>· "지금까지 결과로 진행"(항상 포함)
+            UI-->>User: 질문 + 선택지 표시
+            User->>UI: 선택 응답(번호 또는 자유 텍스트)
+            alt "지금까지 결과로 진행" 선택
+                UI->>Optimizer: best-effort로 종료
+            else 그 외 선택
+                UI->>Search: 선택 반영해 재검색 요청<br/>(품목 수량/조건 변경, 가격상한/제외몰/예산/배송일 조정 등)
+                Search->>Mall: [MCP Client] search_products()<br/>조정된 조건으로 재검색
+                Mall-->>Search: 후보 상품 리스트(갱신)
+                Search->>Optimizer: 후보군 재전달
+            end
         end
     end
 

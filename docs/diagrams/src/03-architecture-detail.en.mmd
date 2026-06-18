@@ -43,7 +43,7 @@ flowchart TB
     Tools --> Cache
     Search --> Optimizer
     Optimizer --> Reflect
-    Reflect -- "Unsatisfied → replan<br/>(LLM judges what to adjust)" --> Orchestrator
+    Reflect -- "Unsatisfied → ask user for options<br/>(HITL, every round)" --> Orchestrator
     Reflect -- "Satisfied" --> Feedback
     Feedback <--> GW
     Feedback --> Router

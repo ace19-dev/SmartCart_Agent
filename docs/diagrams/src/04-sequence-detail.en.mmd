@@ -24,15 +24,22 @@ sequenceDiagram
     Search->>Optimizer: Pass candidate set
     Optimizer->>Optimizer: Compare combinations including shipping<br/>(single mall vs. split purchase)<br/>+ apply popularity priority
 
-    loop Auto-replan up to max_replan_attempts (default 3)
+    loop Up to max_replan_attempts (default 3) question rounds
         Optimizer->>Optimizer: Check if budget tolerance (±10%) exceeded<br/>or delivery unsatisfied
-        alt Satisfied or replan attempt limit reached
+        alt Satisfied or question-round limit reached
             Optimizer->>Optimizer: Exit loop<br/>(if limit reached, record best-effort combination + unmet reasons)
-        else Unsatisfied & limit not reached
-            Optimizer->>Search: Request replan<br/>(adjust volume/quantity, switch to cost-effective brand,<br/>re-search deliverable malls, etc.)
-            Search->>Mall: [MCP Client] search_products()<br/>re-search with adjusted conditions
-            Mall-->>Search: Candidate product list (updated)
-            Search->>Optimizer: Re-pass candidate set
+        else Unsatisfied & limit not reached → ask the user every round (HITL)
+            Optimizer-->>UI: Present options (interrupt)<br/>· buy-multiple/relax-condition/drop-item (verified values, computed by code)<br/>· adjust budget/delivery date/exclude mall (proposed by LLM)<br/>· "proceed with best-effort so far" (always included)
+            UI-->>User: Show question + options
+            User->>UI: Respond with a choice (number or free text)
+            alt Chose "proceed with best-effort so far"
+                UI->>Optimizer: End as best-effort
+            else Chose anything else
+                UI->>Search: Re-search with the chosen adjustment<br/>(change item qty/condition, price cap/excluded mall/budget/delivery date, etc.)
+                Search->>Mall: [MCP Client] search_products()<br/>re-search with adjusted conditions
+                Mall-->>Search: Candidate product list (updated)
+                Search->>Optimizer: Re-pass candidate set
+            end
         end
     end
 

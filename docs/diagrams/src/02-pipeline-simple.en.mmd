@@ -3,7 +3,7 @@ flowchart TD
     B --> C["3️⃣ Search shopping malls<br/>(price·rating·review count·delivery)"]
     C --> D["4️⃣ Compute optimal combination<br/>(initial sort: popularity → rating → price)"]
     D --> E{"5️⃣ Budget/delivery<br/>constraints satisfied?"}
-    E -- "No → Replan<br/>(LLM judges what to adjust)" --> C
+    E -- "No → Ask user for options<br/>(HITL, every round)" --> C
     E -- "Yes" --> F["6️⃣ Present result<br/>purchase links + substitution reasons"]
     F --> G{"7️⃣ User approval<br/>(Phase 2)"}
     G -- "Manual checkout" --> H["✅ Phase 1 complete"]

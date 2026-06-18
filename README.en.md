@@ -21,7 +21,8 @@ a bag of lettuce, arriving before 7am tomorrow, budget under 40,000 won", the ag
    (popularity)**, and delivery availability
 3. Computes the **optimal cart combination (Optimization Pack)** including
    shipping cost, **self-validates budget (including approximate budgets) and
-   delivery constraints**, and automatically replans if they are not met
+   delivery constraints**, and if unmet, asks the user for options every round
+   and replans based on the response (HITL)
 4. Presents the user with a suggestion plus alternative options
 5. **[Phase 1]** Provides **deep links / cart links** for each shopping mall so the
    user can check out directly, or
@@ -47,14 +48,16 @@ This input is processed as follows:
 3. **Optimizer** — Computes the optimal combination where the total
    (including shipping) falls within the approximate budget (± tolerance),
    prioritizing popularity with rating/price as secondary criteria
-4. **Reflection** — If any item exceeds the budget or cannot be delivered in
-   time, replans by substituting a cheaper or deliverable alternative in the
-   same category, and **records why each item was substituted (over budget /
-   delivery unavailable / out of stock)**
+4. **Reflection** — If any item is over budget, undeliverable, or out of
+   stock, presents the user with verified options (buy-multiple/relax-
+   condition/drop-item, computed by code) plus LLM-proposed options
+   (adjust budget/delivery date/exclude mall) — **a human-in-the-loop (HITL)
+   round** — and re-searches based on the user's choice, repeating until
+   satisfied or up to **`max_replan_attempts`** rounds
 5. **Output (Phase 1)** — Presents the recommended product per item +
    **purchase links (deep links)**, total amount/budget status, and the
-   **reasons for any substitutions made during replanning (original product,
-   reason, replacement product)**
+   **adjustments the user chose in each round (original condition, chosen
+   alternative, reason)**
 6. **Output (Phase 2, future)** — Once the user confirms "go ahead and buy
    this", the Purchase Execution Agent adds the items to each shopping mall's
    cart and completes checkout on the user's behalf
@@ -165,7 +168,7 @@ flowchart TD
     B --> C["3️⃣ Search shopping malls<br/>(price·rating·review count·delivery)"]
     C --> D["4️⃣ Compute optimal combination<br/>(initial sort: popularity → rating → price)"]
     D --> E{"5️⃣ Budget/delivery<br/>constraints satisfied?"}
-    E -- "No → Replan<br/>(LLM judges what to adjust)" --> C
+    E -- "No → Ask user for options<br/>(HITL, every round)" --> C
     E -- "Yes" --> F["6️⃣ Present result<br/>purchase links + substitution reasons"]
     F --> G{"7️⃣ User approval<br/>(Phase 2)"}
     G -- "Manual checkout" --> H["✅ Phase 1 complete"]
@@ -230,7 +233,7 @@ flowchart TB
     Tools --> Cache
     Search --> Optimizer
     Optimizer --> Reflect
-    Reflect -- "Unsatisfied → replan<br/>(LLM judges what to adjust)" --> Orchestrator
+    Reflect -- "Unsatisfied → ask user for options<br/>(HITL, every round)" --> Orchestrator
     Reflect -- "Satisfied" --> Feedback
     Feedback <--> GW
     Feedback --> Router
@@ -284,15 +287,22 @@ sequenceDiagram
     Search->>Optimizer: Pass candidate set
     Optimizer->>Optimizer: Compare combinations including shipping<br/>(single mall vs. split purchase)<br/>+ apply popularity priority
 
-    loop Auto-replan up to max_replan_attempts (default 3)
+    loop Up to max_replan_attempts (default 3) question rounds
         Optimizer->>Optimizer: Check if budget tolerance (±10%) exceeded<br/>or delivery unsatisfied
-        alt Satisfied or replan attempt limit reached
+        alt Satisfied or question-round limit reached
             Optimizer->>Optimizer: Exit loop<br/>(if limit reached, record best-effort combination + unmet reasons)
-        else Unsatisfied & limit not reached
-            Optimizer->>Search: Request replan<br/>(adjust volume/quantity, switch to cost-effective brand,<br/>re-search deliverable malls, etc.)
-            Search->>Mall: [MCP Client] search_products()<br/>re-search with adjusted conditions
-            Mall-->>Search: Candidate product list (updated)
-            Search->>Optimizer: Re-pass candidate set
+        else Unsatisfied & limit not reached → ask the user every round (HITL)
+            Optimizer-->>UI: Present options (interrupt)<br/>· buy-multiple/relax-condition/drop-item (verified values, computed by code)<br/>· adjust budget/delivery date/exclude mall (proposed by LLM)<br/>· "proceed with best-effort so far" (always included)
+            UI-->>User: Show question + options
+            User->>UI: Respond with a choice (number or free text)
+            alt Chose "proceed with best-effort so far"
+                UI->>Optimizer: End as best-effort
+            else Chose anything else
+                UI->>Search: Re-search with the chosen adjustment<br/>(change item qty/condition, price cap/excluded mall/budget/delivery date, etc.)
+                Search->>Mall: [MCP Client] search_products()<br/>re-search with adjusted conditions
+                Mall-->>Search: Candidate product list (updated)
+                Search->>Optimizer: Re-pass candidate set
+            end
         end
     end
 
@@ -331,7 +341,7 @@ sequenceDiagram
 | **Orchestrator (Planner)** | Decomposes the overall task into sub-steps and controls the Search→Optimize→Reflect loop. Triggers replanning based on Reflection results | LLM Agent Loop (ReAct / Plan-Execute) | 🟢 Agent |
 | **Product Search Agent** | Calls each shopping mall's search tool and performs initial filtering/sorting by delivery condition/price/rating/**review count·sales (popularity)** | LLM Tool-use (MCP Client) → per-mall MCP Server | 🟢 Agent |
 | **Optimization Engine** | Computes the combination (single mall vs. split purchase) that satisfies the ranking priority (popularity/rating/price) while keeping the total including shipping within the (approximate) budget | Combinatorial optimization algorithm (Knapsack/Greedy + constraints) | 🔧 Tool (called by Orchestrator/Reflection) |
-| **Reflection Module** | Self-validates whether the computed combination satisfies budget (including tolerance)/delivery constraints, and triggers replanning if not. **Records substituted items with a reason code (`budget_exceeded`/`delivery_unavailable`/`out_of_stock`) and explanation**. `ranking_priority` is only the sort criterion for the initial search/optimization — which conditions to adjust during replanning (volume/quantity/brand/shopping mall, etc.) are not fixed rules; **the LLM judges this for itself based on the situation**. **Replanning is attempted at most `max_replan_attempts` times (default 3)**; once the limit is reached, the best combination found so far is presented as a best-effort result along with the unmet reasons | Rule-based validation + LLM evaluation | 🟢 Agent |
+| **Reflection Module** | Self-validates whether the computed combination satisfies budget (including tolerance)/delivery constraints. If not, **presents the user with options (HITL)** — for `out_of_stock` (e.g. volume), code computes verified options (buy-multiple/relax-condition/drop-item) from existing candidates; for `budget_exceeded`/`delivery_unavailable`, the LLM proposes adjustment directions (budget/delivery date/excluded mall). Re-searches based on the user's choice, repeating until satisfied or up to **`max_replan_attempts` question rounds (default 3)**; once the limit is reached (or the user picks "proceed with best-effort"), presents the best combination found so far along with the unmet reasons | Rule-based validation + LLM proposal + HITL | 🟢 Agent |
 | **Alternative Engine** | Ranks alternative candidates (price/rating/popularity/eco-friendly, etc.) and **automatically finds/suggests similar products in the same category when an item is out of stock or unavailable** | Rule-based + re-invoking search | 🔧 Tool (called by Search/Reflection) |
 | **Deep Link Router** | Generates per-mall product/cart URLs from the final cart (**Phase 1 primary output**) | Per-mall URL scheme mapping | 🔧 Tool (called by Orchestrator) |
 | **Shopping Mall Connector (MCP Server)** | Exposes each mall's product search/detail lookup/cart/order functions as standard MCP Tools (`search_products`, `get_product_detail`, `add_to_cart`, `place_order`, etc.). **A single MCP server registers per-mall adapters as plugins** to route calls (e.g., `malls/gsfresh.py`, `malls/emart.py`) — adding a new mall requires only a new adapter, not a new server. API-first, with crawlers for unofficial channels | MCP Server (single server + per-mall adapters: GS Fresh Mall/Emart/Kurly/Naver, etc.) | 🔧 Tool (called via MCP Client by Search/Purchase Agent) |
@@ -358,8 +368,9 @@ agents call**.
     clarifying questions for ambiguous items
   - **Product Search Agent**: Calls search tools and adjusts the search
     strategy based on results
-  - **Reflection Module**: Evaluates the Optimizer's results and generates the
-    explanation shown to the user for substitutions
+  - **Reflection Module**: Evaluates the Optimizer's results and, if unmet,
+    builds the options to present to the user (verified values computed
+    deterministically where possible, LLM-proposed for judgment-call areas)
   - **Purchase Execution Agent (Phase 2)**: Executes automated checkout and
     handles exceptions (out of stock, payment failure, etc.)
   - **Mall Onboarding Agent (semi-automated)**: Generates an adapter code/test
@@ -396,13 +407,13 @@ agents call**.
 
 | Requirement | How It's Addressed |
 |---|---|
-| **Autonomy** | Unless the user rejects the result, search → optimize → constraint validation → replanning all run automatically without human intervention |
-| **Plan & Replan** | The Orchestrator decomposes goals (budget/delivery time/rating) into sub-tasks, and Reflection automatically replans (adjusting quantity, switching brands, re-searching) when constraints aren't met. **Replanning termination**: after at most `max_replan_attempts` (default 3) tries, if constraints are still unmet, present the best combination found so far (best-effort) along with the unmet reasons, avoiding infinite loops |
+| **Autonomy** | Search → optimize → constraint validation run automatically without human intervention. When constraints aren't met, control switches to a **HITL loop that asks the user for options every round**, instead of substituting on its own assumptions |
+| **Plan & Replan** | The Orchestrator decomposes goals (budget/delivery time/rating) into sub-tasks, and when Reflection finds constraints unmet, **presents the user with options (HITL)** — verified values (relax volume/quantity/drop item) or LLM-proposed adjustments (budget/delivery date/excluded mall) — and re-searches based on the user's choice. **Replanning termination**: satisfied, or after at most `max_replan_attempts` (default 3) question rounds, present the best combination found so far (best-effort) along with the unmet reasons, avoiding infinite loops |
 | **Tool Use** | The Search/Purchase Agent acquires real-time data by calling each shopping mall's **MCP Server (Common Tools)** for search, cart, and order functions as standardized tools |
-| **Reflection / Self-verification** | The Reflection module validates the Optimization results and self-improves through the loop on failure |
-| **Transparency** | Items substituted during replanning have their **substitution reason (over budget/delivery unavailable/out of stock)** clearly stated in the final result alongside the original and replacement products |
-| **Memory** | Short-term: Session Store (Memory MCP) keeps the current request's search/replan attempt history so Reflection avoids repeating the same replan. Long-term: Preference Memory (Memory MCP) carries cross-session user preferences into future requests. Additionally, Mall Knowledge Base (Retrieval MCP, RAG) is searched for per-mall heuristics to support replan decisions |
-| **Ambiguity Resolution / Human-in-the-loop** | Items with low parser confidence trigger a clarifying question or a best-guess suggestion with reasoning. A user confirmation step is retained before final checkout |
+| **Reflection / Self-verification** | The Reflection module validates the Optimization results and, on failure, takes the user's choice and self-improves through the loop |
+| **Transparency** | Items that didn't meet constraints have the **adjustment the user chose (original condition, chosen alternative, reason)** clearly stated in the final result |
+| **Memory** | Short-term: Session Store (Memory MCP) keeps the current request's search/replan attempt history so Reflection avoids presenting the same options again. Long-term: Preference Memory (Memory MCP) carries cross-session user preferences into future requests. Additionally, Mall Knowledge Base (Retrieval MCP, RAG) is searched for per-mall heuristics to support option proposals |
+| **Ambiguity Resolution / Human-in-the-loop** | Items with low parser confidence trigger a clarifying question or a best-guess suggestion with reasoning. **The same per-round HITL pattern also applies when budget/delivery/stock constraints aren't met.** A user confirmation step is retained before final checkout |
 | **Goal/Constraint Tracking** | Budget (hard/soft, tolerance), delivery deadline/date, and ranking priority (popularity/rating/price) are consistently tracked across the entire pipeline, with satisfaction status shown in the final result |
 | **Safe Autonomous Execution (Phase 2 Safety)** | Automated checkout always requires **user approval (HITL)** immediately before payment; credentials are retrieved from the Secrets Vault only at execution time; all order actions are recorded in the Audit Log for traceability/refund handling |
 
@@ -528,6 +539,12 @@ agents call**.
 > | `out_of_stock`, and `reason_detail` is the explanation shown directly to the
 > user. (`alternatives` are optional recommended candidates the user can choose
 > to swap to, separate from `substitutions`)
+>
+> **Current implementation note**: Phase 1 conveys this same information
+> through the HITL conversation (question/options/answer) instead of these two
+> fields when constraints aren't met (see `docs/implementation-plan.md` Step
+> 10) — `substitutions`/`alternatives` are always empty arrays, though the
+> model fields themselves remain in place.
 
 ---
 
